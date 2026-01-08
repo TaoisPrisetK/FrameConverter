@@ -28,6 +28,7 @@ src-tauri/release/
 *.log
 *.tmp
 *.temp
+.vite/
 .cursor/
 
 # IDE / OS
