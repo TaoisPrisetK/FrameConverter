@@ -832,7 +832,7 @@ fn apng_lossy_bits(quality: u8) -> u8 {
     } else if quality >= 15 {
         5
     } else {
-        5
+        4
     }
 }
 
@@ -867,6 +867,44 @@ fn blue_noise_quantize_channel(value: u8, bits: u8, x: u32, y: u32, strength: f3
     let jitter = (centered as f32 * (step as f32) / 64.0 * strength) as i16;
     let adjusted = (value as i16 + jitter).clamp(0, 255) as u8;
     (adjusted >> shift) << shift
+}
+
+fn apply_box_blur_rgb(raw_data: &mut [u8], width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let w = width as usize;
+    let h = height as usize;
+    let mut src = raw_data.to_vec();
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum_r: u32 = 0;
+            let mut sum_g: u32 = 0;
+            let mut sum_b: u32 = 0;
+            let mut count: u32 = 0;
+            for dy in [-1isize, 0, 1] {
+                let yy = y as isize + dy;
+                if yy < 0 || yy >= h as isize {
+                    continue;
+                }
+                for dx in [-1isize, 0, 1] {
+                    let xx = x as isize + dx;
+                    if xx < 0 || xx >= w as isize {
+                        continue;
+                    }
+                    let idx = (yy as usize * w + xx as usize) * 4;
+                    sum_r += src[idx] as u32;
+                    sum_g += src[idx + 1] as u32;
+                    sum_b += src[idx + 2] as u32;
+                    count += 1;
+                }
+            }
+            let idx = (y * w + x) * 4;
+            raw_data[idx] = (sum_r / count) as u8;
+            raw_data[idx + 1] = (sum_g / count) as u8;
+            raw_data[idx + 2] = (sum_b / count) as u8;
+        }
+    }
 }
 
 fn save_as_apng_streaming(
@@ -1070,6 +1108,7 @@ fn save_as_apng_rust(
 
     let lossy_bits = lossy_quality.map(apng_lossy_bits);
     let enable_dither = lossy_bits.map(|b| b <= 5).unwrap_or(false);
+    let enable_smear = false;
     let dither_strength = match lossy_bits {
         Some(3) => 0.45,
         Some(4) => 0.6,
@@ -1089,6 +1128,7 @@ fn save_as_apng_rust(
             "dither": enable_dither,
             "ditherMode": if enable_dither { "blue-noise" } else { "off" },
             "ditherStrength": dither_strength,
+            "smear": enable_smear,
             "outputPath": output_path.to_string_lossy().to_string()
         },
         "timestamp": now_millis()
@@ -1136,6 +1176,9 @@ fn save_as_apng_rust(
                         px[2] = quantize_channel(px[2], bits);
                         // keep alpha channel unchanged
                     }
+                }
+                if enable_smear {
+                    apply_box_blur_rgb(&mut raw_data, width, height);
                 }
             }
         }
