@@ -55,6 +55,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+
 fn prepare_ffmpeg_sequence_input(frame_paths: &[String], prefix: &str) -> Result<(PathBuf, String), ConverterError> {
     if frame_paths.is_empty() {
         return Err(ConverterError::InvalidFormat("No frames".to_string()));
@@ -817,12 +818,138 @@ fn save_as_webp_streaming(
 }
 
 // Ultra-fast APNG encoder using FFmpeg
+fn apng_lossy_bits(quality: u8) -> u8 {
+    if quality >= 90 {
+        8
+    } else if quality >= 75 {
+        7
+    } else if quality >= 60 {
+        6
+    } else if quality >= 45 {
+        5
+    } else if quality >= 30 {
+        5
+    } else if quality >= 15 {
+        5
+    } else {
+        5
+    }
+}
+
+fn quantize_channel(value: u8, bits: u8) -> u8 {
+    if bits >= 8 {
+        value
+    } else {
+        let shift = 8 - bits;
+        (value >> shift) << shift
+    }
+}
+
+fn apply_floyd_steinberg_dither(
+    raw_data: &mut [u8],
+    width: u32,
+    height: u32,
+    bits: u8,
+    strength: f32,
+) {
+    if bits >= 8 || width == 0 || height == 0 {
+        return;
+    }
+    let w = width as usize;
+    let mut err_r = vec![0i32; w + 2];
+    let mut err_g = vec![0i32; w + 2];
+    let mut err_b = vec![0i32; w + 2];
+    let mut next_err_r = vec![0i32; w + 2];
+    let mut next_err_g = vec![0i32; w + 2];
+    let mut next_err_b = vec![0i32; w + 2];
+
+    for y in 0..height as usize {
+        let serpentine = (y % 2) == 1;
+        let x_range: Box<dyn Iterator<Item = usize>> = if serpentine {
+            Box::new((0..w).rev())
+        } else {
+            Box::new(0..w)
+        };
+        for x in x_range {
+            let idx = (y * w + x) * 4;
+            let r = raw_data[idx] as i32;
+            let g = raw_data[idx + 1] as i32;
+            let b = raw_data[idx + 2] as i32;
+
+            let r_adj = (r * 16 + err_r[x + 1]).clamp(0, 255 * 16) / 16;
+            let g_adj = (g * 16 + err_g[x + 1]).clamp(0, 255 * 16) / 16;
+            let b_adj = (b * 16 + err_b[x + 1]).clamp(0, 255 * 16) / 16;
+
+            let r_q = quantize_channel(r_adj as u8, bits) as i32;
+            let g_q = quantize_channel(g_adj as u8, bits) as i32;
+            let b_q = quantize_channel(b_adj as u8, bits) as i32;
+
+            raw_data[idx] = r_q as u8;
+            raw_data[idx + 1] = g_q as u8;
+            raw_data[idx + 2] = b_q as u8;
+
+            let r_err = ((r_adj - r_q) as f32 * strength) as i32;
+            let g_err = ((g_adj - g_q) as f32 * strength) as i32;
+            let b_err = ((b_adj - b_q) as f32 * strength) as i32;
+
+            // Distribute error (weights are 7/16, 3/16, 5/16, 1/16)
+            if serpentine {
+                if x > 0 {
+                    err_r[x] += r_err * 7;
+                    err_g[x] += g_err * 7;
+                    err_b[x] += b_err * 7;
+                }
+            } else {
+                err_r[x + 2] += r_err * 7;
+                err_g[x + 2] += g_err * 7;
+                err_b[x + 2] += b_err * 7;
+            }
+
+            if serpentine {
+                if x + 1 < w {
+                    next_err_r[x + 2] += r_err * 3;
+                    next_err_g[x + 2] += g_err * 3;
+                    next_err_b[x + 2] += b_err * 3;
+                }
+                next_err_r[x + 1] += r_err * 5;
+                next_err_g[x + 1] += g_err * 5;
+                next_err_b[x + 1] += b_err * 5;
+                if x > 0 {
+                    next_err_r[x] += r_err;
+                    next_err_g[x] += g_err;
+                    next_err_b[x] += b_err;
+                }
+            } else {
+                if x > 0 {
+                    next_err_r[x] += r_err * 3;
+                    next_err_g[x] += g_err * 3;
+                    next_err_b[x] += b_err * 3;
+                }
+                next_err_r[x + 1] += r_err * 5;
+                next_err_g[x + 1] += g_err * 5;
+                next_err_b[x + 1] += b_err * 5;
+                next_err_r[x + 2] += r_err;
+                next_err_g[x + 2] += g_err;
+                next_err_b[x + 2] += b_err;
+            }
+        }
+
+        err_r.fill(0);
+        err_g.fill(0);
+        err_b.fill(0);
+        std::mem::swap(&mut err_r, &mut next_err_r);
+        std::mem::swap(&mut err_g, &mut next_err_g);
+        std::mem::swap(&mut err_b, &mut next_err_b);
+    }
+}
+
 fn save_as_apng_streaming(
     frame_paths: &[String],
     output_path: &Path,
     fps: f64,
     loop_count: u32,
     app: &tauri::AppHandle,
+    lossy_quality: Option<u8>,
 ) -> Result<(), ConverterError> {
     if frame_paths.is_empty() {
         return Err(ConverterError::InvalidFormat("No frames to encode".to_string()));
@@ -834,8 +961,53 @@ fn save_as_apng_streaming(
 
     // Try FFmpeg first
     let ffmpeg_path = get_ffmpeg_path();
-    if let Some(ffmpeg) = &ffmpeg_path {
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run6",
+        "hypothesisId": "H1",
+        "location": "converter.rs:save_as_apng_streaming:entry",
+        "message": "apng encoder path decision",
+        "data": {
+            "lossyQuality": lossy_quality,
+            "ffmpegAvailable": ffmpeg_path.is_some(),
+            "forceRust": lossy_quality.is_some(),
+            "outputPath": output_path.to_string_lossy().to_string()
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
+    if lossy_quality.is_some() {
+        log::info!("Lossy APNG requested; forcing Rust encoder");
+        // #region agent log
+        write_debug_log(json!({
+            "sessionId": "debug-session",
+            "runId": "run6",
+            "hypothesisId": "H1",
+            "location": "converter.rs:save_as_apng_streaming:force_rust",
+            "message": "apng lossy forces rust encoder",
+            "data": {
+                "lossyQuality": lossy_quality
+            },
+            "timestamp": now_millis()
+        }));
+        // #endregion
+    } else if let Some(ffmpeg) = &ffmpeg_path {
         log::info!("Using FFmpeg for APNG at: {}", ffmpeg);
+        // #region agent log
+        write_debug_log(json!({
+            "sessionId": "debug-session",
+            "runId": "run6",
+            "hypothesisId": "H1",
+            "location": "converter.rs:save_as_apng_streaming:ffmpeg_path",
+            "message": "apng using ffmpeg",
+            "data": {
+                "lossyQuality": lossy_quality,
+                "ffmpeg": ffmpeg
+            },
+            "timestamp": now_millis()
+        }));
+        // #endregion
         
         app.emit("convert-progress", ConvertProgressEvent {
             phase: "Converting with FFmpeg".to_string(),
@@ -852,7 +1024,7 @@ fn save_as_apng_streaming(
             Ok(v) => v,
             Err(e) => {
                 log::warn!("Sequence input prep failed, falling back to Rust APNG encoder: {}", e);
-                return save_as_apng_rust(frame_paths, output_path, fps, loop_count, app);
+                return save_as_apng_rust(frame_paths, output_path, fps, loop_count, app, lossy_quality);
             }
         };
 
@@ -934,10 +1106,23 @@ fn save_as_apng_streaming(
         return Err(ConverterError::APNG("FFmpeg APNG failed".to_string()));
     } else {
         log::info!("FFmpeg not available for APNG, using Rust implementation");
+        // #region agent log
+        write_debug_log(json!({
+            "sessionId": "debug-session",
+            "runId": "run6",
+            "hypothesisId": "H1",
+            "location": "converter.rs:save_as_apng_streaming:rust_path",
+            "message": "apng using rust encoder",
+            "data": {
+                "lossyQuality": lossy_quality
+            },
+            "timestamp": now_millis()
+        }));
+        // #endregion
     }
 
     // Fallback to Rust implementation
-    save_as_apng_rust(frame_paths, output_path, fps, loop_count, app)
+    save_as_apng_rust(frame_paths, output_path, fps, loop_count, app, lossy_quality)
 }
 
 // Rust fallback APNG encoder
@@ -947,6 +1132,7 @@ fn save_as_apng_rust(
     fps: f64,
     loop_count: u32,
     app: &tauri::AppHandle,
+    lossy_quality: Option<u8>,
 ) -> Result<(), ConverterError> {
     use png::Encoder;
     
@@ -955,6 +1141,33 @@ fn save_as_apng_rust(
     let (width, height) = image::image_dimensions(&frame_paths[0])?;
     let delay_num = 1u16;
     let delay_den = fps as u16;
+
+    let lossy_bits = lossy_quality.map(apng_lossy_bits);
+    // With 5-bit minimum, dithering is usually unnecessary and can add dot artifacts.
+    let enable_dither = lossy_bits.map(|b| b <= 4).unwrap_or(false);
+    let dither_strength = match lossy_bits {
+        Some(4) => 0.65,
+        Some(5) => 0.85,
+        _ => 1.0,
+    };
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run5",
+        "hypothesisId": "H1",
+        "location": "converter.rs:save_as_apng_streaming:lossy_setup",
+        "message": "apng lossy setup",
+        "data": {
+            "lossyQuality": lossy_quality,
+            "lossyBits": lossy_bits,
+            "dither": enable_dither,
+            "ditherMode": if enable_dither { "floyd-steinberg" } else { "off" },
+            "ditherStrength": dither_strength,
+            "outputPath": output_path.to_string_lossy().to_string()
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
 
     let file = fs::File::create(&temp_path)?;
     let buf_writer = std::io::BufWriter::new(file);
@@ -977,7 +1190,27 @@ fn save_as_apng_rust(
 
         let img = image::open(path)?;
         let rgba = img.to_rgba8();
-        let raw_data = rgba.into_raw();
+        let mut raw_data = rgba.into_raw();
+        if let Some(bits) = lossy_bits {
+            if bits < 8 {
+                if enable_dither {
+                    apply_floyd_steinberg_dither(
+                        &mut raw_data,
+                        width,
+                        height,
+                        bits,
+                        dither_strength,
+                    );
+                } else {
+                    for px in raw_data.chunks_mut(4) {
+                        px[0] = quantize_channel(px[0], bits);
+                        px[1] = quantize_channel(px[1], bits);
+                        px[2] = quantize_channel(px[2], bits);
+                        // keep alpha channel unchanged
+                    }
+                }
+            }
+        }
 
         writer.set_frame_delay(delay_num, delay_den)
             .map_err(|e| ConverterError::APNG(format!("Failed to set frame delay: {}", e)))?;
@@ -1005,6 +1238,7 @@ fn save_as_apng_rust(
 fn compress_locally(
     image_path: &Path,
     _quality: u8,
+    output_format: &str,
 ) -> Result<Vec<u8>, ConverterError> {
     // Read the image
     let img = image::open(image_path)?;
@@ -1019,13 +1253,14 @@ fn compress_locally(
     // #region agent log
     write_debug_log(json!({
         "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "H4",
+        "runId": "run2",
+        "hypothesisId": "H1",
         "location": "converter.rs:compress_locally:entry",
         "message": "local compression entry",
         "data": {
             "ext": ext,
             "quality": _quality,
+            "outputFormat": output_format,
             "fileSize": file_size
         },
         "timestamp": now_millis()
@@ -1035,52 +1270,82 @@ fn compress_locally(
     let result = match ext.as_deref() {
         Some("png") | Some("apng") => {
             let input_bytes = fs::read(image_path)?;
-            let preset = if _quality >= 80 {
-                2
+            let preset = if _quality >= 85 {
+                1
             } else if _quality >= 60 {
-                3
+                2
             } else if _quality >= 40 {
-                4
+                3
             } else if _quality >= 20 {
                 5
             } else {
                 6
             };
 
+            let mut options = oxipng::Options::from_preset(preset);
+            let is_apng = output_format == "apng";
+            if is_apng {
+                // Avoid stripping APNG animation chunks.
+                options.strip = oxipng::StripChunks::None;
+            } else if _quality <= 40 {
+                options.strip = oxipng::StripChunks::Safe;
+            } else {
+                options.strip = oxipng::StripChunks::None;
+            }
+            options.optimize_alpha = _quality <= 40;
+            options.fast_evaluation = _quality >= 60;
+            if _quality >= 80 {
+                options.bit_depth_reduction = false;
+                options.color_type_reduction = false;
+                options.palette_reduction = false;
+                options.grayscale_reduction = false;
+                options.idat_recoding = false;
+            } else if _quality >= 50 {
+                options.bit_depth_reduction = true;
+                options.color_type_reduction = true;
+                options.palette_reduction = false;
+                options.grayscale_reduction = true;
+                options.idat_recoding = true;
+            } else {
+                options.bit_depth_reduction = true;
+                options.color_type_reduction = true;
+                options.palette_reduction = true;
+                options.grayscale_reduction = true;
+                options.idat_recoding = true;
+            }
+
+            let deflate_level = match options.deflate {
+                oxipng::Deflaters::Libdeflater { compression } => Some(compression),
+                #[allow(unreachable_patterns)]
+                _ => None,
+            };
+
             // #region agent log
             write_debug_log(json!({
                 "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "H4",
-                "location": "converter.rs:compress_locally:oxipng_start",
-                "message": "oxipng optimize start",
+                "runId": "run2",
+                "hypothesisId": "H2",
+                "location": "converter.rs:compress_locally:preset",
+                "message": "oxipng options chosen",
                 "data": {
                     "preset": preset,
-                    "inputLen": input_bytes.len()
+                    "inputLen": input_bytes.len(),
+                    "strip": format!("{:?}", options.strip),
+                    "optimizeAlpha": options.optimize_alpha,
+                    "fastEvaluation": options.fast_evaluation,
+                    "deflateCompression": deflate_level,
+                    "bitDepthReduction": options.bit_depth_reduction,
+                    "colorTypeReduction": options.color_type_reduction,
+                    "paletteReduction": options.palette_reduction,
+                    "grayscaleReduction": options.grayscale_reduction,
+                    "idatRecoding": options.idat_recoding
                 },
                 "timestamp": now_millis()
             }));
             // #endregion
 
-            let options = oxipng::Options::from_preset(preset);
             let optimized = oxipng::optimize_from_memory(&input_bytes, &options)
                 .map_err(|e| ConverterError::InvalidFormat(format!("oxipng error: {}", e)))?;
-
-            // #region agent log
-            write_debug_log(json!({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "H4",
-                "location": "converter.rs:compress_locally:oxipng_done",
-                "message": "oxipng optimize done",
-                "data": {
-                    "preset": preset,
-                    "outputLen": optimized.len()
-                },
-                "timestamp": now_millis()
-            }));
-            // #endregion
-
             Ok(optimized)
         }
         Some("webp") => {
@@ -1112,12 +1377,13 @@ fn compress_locally(
         // #region agent log
         write_debug_log(json!({
             "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "H4",
+            "runId": "run2",
+            "hypothesisId": "H3",
             "location": "converter.rs:compress_locally:exit",
             "message": "local compression result",
             "data": {
                 "ext": ext,
+                "outputFormat": output_format,
                 "outputLen": data.len()
             },
             "timestamp": now_millis()
@@ -1159,7 +1425,7 @@ async fn compress_with_tinypng(
     // #region agent log
     write_debug_log(json!({
         "sessionId": "debug-session",
-        "runId": "run1",
+        "runId": "run4",
         "hypothesisId": "H3",
         "location": "converter.rs:compress_with_tinypng:shrink_ok",
         "message": "tinypng shrink ok",
@@ -1195,7 +1461,7 @@ async fn compress_with_tinypng(
     // #region agent log
     write_debug_log(json!({
         "sessionId": "debug-session",
-        "runId": "run1",
+        "runId": "run4",
         "hypothesisId": "H3",
         "location": "converter.rs:compress_with_tinypng:downloaded",
         "message": "tinypng data downloaded",
@@ -1214,24 +1480,6 @@ pub async fn convert_sequence_frames(
     app: tauri::AppHandle,
     request: ConvertRequest,
 ) -> Result<Vec<ConvertResult>, String> {
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "H1",
-        "location": "converter.rs:convert_sequence_frames:entry",
-        "message": "convert request flags",
-        "data": {
-            "inputMode": request.input_mode,
-            "useLocalCompression": request.use_local_compression,
-            "hasApiKey": request.api_key.is_some(),
-            "compressionQuality": request.compression_quality,
-            "formats": request.formats,
-            "outputDir": request.output_dir
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
     let scan_result = scan_frame_files(
         request.input_mode.clone(),
         request.input_path.clone(),
@@ -1297,7 +1545,21 @@ pub async fn convert_sequence_frames(
         // Use streaming encoding for GIF to avoid loading all frames into memory
         let convert_result = match format.as_str() {
             "gif" => save_as_gif_streaming(&frame_paths, &output_path, request.fps, request.loop_count, &app),
-            "apng" => save_as_apng_streaming(&frame_paths, &output_path, request.fps, request.loop_count, &app),
+            "apng" => {
+                let lossy_quality = if request.use_local_compression {
+                    Some(request.compression_quality)
+                } else {
+                    None
+                };
+                save_as_apng_streaming(
+                    &frame_paths,
+                    &output_path,
+                    request.fps,
+                    request.loop_count,
+                    &app,
+                    lossy_quality,
+                )
+            }
             "webp" => save_as_webp_streaming(&frame_paths, &output_path, request.fps, request.loop_count, &app),
             _ => Err(ConverterError::InvalidFormat(format.clone())),
         };
@@ -1313,43 +1575,70 @@ pub async fn convert_sequence_frames(
 
                 // Apply compression if requested
                 if request.use_local_compression || request.api_key.is_some() {
-                    // #region agent log
-                    write_debug_log(json!({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "H2",
-                        "location": "converter.rs:convert_sequence_frames:compression_check",
-                        "message": "compression requested",
-                        "data": {
-                            "format": format,
-                            "outputPath": output_path.to_string_lossy().to_string(),
-                            "originalSize": original_size,
-                            "useLocalCompression": request.use_local_compression,
-                            "hasApiKey": request.api_key.is_some()
-                        },
-                        "timestamp": now_millis()
-                    }));
-                    // #endregion
+                    app.emit("convert-progress", ConvertProgressEvent {
+                        phase: "Compressing output".to_string(),
+                        current: 0,
+                        total: 0,
+                        percent: 100.0,
+                        format: Some(format.clone()),
+                        file: Some(output_path.to_string_lossy().to_string()),
+                    }).ok();
                     if let Some(ref api_key) = request.api_key {
+                        // TinyPNG does not support APNG; fall back to local for APNG.
+                        if format == "apng" {
+                            // #region agent log
+                            write_debug_log(json!({
+                                "sessionId": "debug-session",
+                                "runId": "run4",
+                                "hypothesisId": "H1",
+                                "location": "converter.rs:convert_sequence_frames:tinypng_skipped",
+                                "message": "tinypng skipped for apng",
+                                "data": {
+                                    "format": format,
+                                    "outputPath": output_path.to_string_lossy().to_string()
+                                },
+                                "timestamp": now_millis()
+                            }));
+                            // #endregion
+                        } else {
+                            // #region agent log
+                            write_debug_log(json!({
+                                "sessionId": "debug-session",
+                                "runId": "run4",
+                                "hypothesisId": "H2",
+                                "location": "converter.rs:convert_sequence_frames:tinypng_start",
+                                "message": "tinypng compression start",
+                                "data": {
+                                    "format": format,
+                                    "outputPath": output_path.to_string_lossy().to_string()
+                                },
+                                "timestamp": now_millis()
+                            }));
+                            // #endregion
+                        }
                         // Use TinyPNG API
-                        match compress_with_tinypng(api_key, &output_path).await {
+                        let tinypng_result = if format == "apng" {
+                            Err(ConverterError::Api("TinyPNG does not support APNG".to_string()))
+                        } else {
+                            compress_with_tinypng(api_key, &output_path).await
+                        };
+                        match tinypng_result {
                             Ok(compressed_data) => {
-                                let compressed_path = output_path.with_extension(format!("compressed.{}", ext));
-                                if let Err(e) = fs::write(&compressed_path, compressed_data) {
+                                if let Err(e) = fs::write(&output_path, compressed_data) {
                                     error = Some(e.to_string());
                                 } else {
-                                    compressed_size = fs::metadata(&compressed_path)
+                                    compressed_size = fs::metadata(&output_path)
                                         .ok()
                                         .map(|m| m.len());
                                     // #region agent log
                                     write_debug_log(json!({
                                         "sessionId": "debug-session",
-                                        "runId": "run1",
-                                        "hypothesisId": "H3",
-                                        "location": "converter.rs:convert_sequence_frames:tinypng_written",
-                                        "message": "tinypng compressed file written",
+                                        "runId": "run4",
+                                        "hypothesisId": "H2",
+                                        "location": "converter.rs:convert_sequence_frames:tinypng_done",
+                                        "message": "tinypng compression done",
                                         "data": {
-                                            "compressedPath": compressed_path.to_string_lossy().to_string(),
+                                            "outputPath": output_path.to_string_lossy().to_string(),
                                             "compressedSize": compressed_size
                                         },
                                         "timestamp": now_millis()
@@ -1363,29 +1652,14 @@ pub async fn convert_sequence_frames(
                         }
                     } else if request.use_local_compression {
                         // Use local compression
-                        match compress_locally(&output_path, request.compression_quality) {
+                        match compress_locally(&output_path, request.compression_quality, format) {
                             Ok(compressed_data) => {
-                                let compressed_path = output_path.with_extension(format!("compressed.{}", ext));
-                                if let Err(e) = fs::write(&compressed_path, compressed_data) {
+                                if let Err(e) = fs::write(&output_path, compressed_data) {
                                     error = Some(e.to_string());
                                 } else {
-                                    compressed_size = fs::metadata(&compressed_path)
+                                    compressed_size = fs::metadata(&output_path)
                                         .ok()
                                         .map(|m| m.len());
-                                    // #region agent log
-                                    write_debug_log(json!({
-                                        "sessionId": "debug-session",
-                                        "runId": "run1",
-                                        "hypothesisId": "H4",
-                                        "location": "converter.rs:convert_sequence_frames:local_written",
-                                        "message": "local compressed file written",
-                                        "data": {
-                                            "compressedPath": compressed_path.to_string_lossy().to_string(),
-                                            "compressedSize": compressed_size
-                                        },
-                                        "timestamp": now_millis()
-                                    }));
-                                    // #endregion
                                 }
                             }
                             Err(e) => {
@@ -1393,17 +1667,29 @@ pub async fn convert_sequence_frames(
                             }
                         }
                     }
-                } else {
+                    app.emit("convert-progress", ConvertProgressEvent {
+                        phase: "Compression complete".to_string(),
+                        current: 0,
+                        total: 0,
+                        percent: 100.0,
+                        format: Some(format.clone()),
+                        file: Some(output_path.to_string_lossy().to_string()),
+                    }).ok();
                     // #region agent log
                     write_debug_log(json!({
                         "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "H1",
-                        "location": "converter.rs:convert_sequence_frames:compression_skipped",
-                        "message": "compression not requested",
+                        "runId": "run4",
+                        "hypothesisId": "H4",
+                        "location": "converter.rs:convert_sequence_frames:compression_summary",
+                        "message": "compression size summary",
                         "data": {
                             "format": format,
-                            "outputPath": output_path.to_string_lossy().to_string()
+                            "outputPath": output_path.to_string_lossy().to_string(),
+                            "originalSize": original_size,
+                            "compressedSize": compressed_size,
+                            "quality": request.compression_quality,
+                            "useLocalCompression": request.use_local_compression,
+                            "hasApiKey": request.api_key.is_some()
                         },
                         "timestamp": now_millis()
                     }));
