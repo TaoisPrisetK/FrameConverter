@@ -1,12 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use image::{ImageFormat, GenericImageView};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tauri::Emitter;
 use walkdir::WalkDir;
 use thiserror::Error;
@@ -38,22 +35,6 @@ fn make_unique_temp_dir(prefix: &str) -> Result<PathBuf, std::io::Error> {
     Ok(base)
 }
 
-fn write_debug_log(payload: serde_json::Value) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/Users/ks10/Desktop/Cursor/Tool/FrameConverter/.cursor/debug.log")
-    {
-        let _ = writeln!(file, "{}", payload.to_string());
-    }
-}
-
-fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
 
 
 fn prepare_ffmpeg_sequence_input(frame_paths: &[String], prefix: &str) -> Result<(PathBuf, String), ConverterError> {
@@ -869,13 +850,168 @@ fn blue_noise_quantize_channel(value: u8, bits: u8, x: u32, y: u32, strength: f3
     (adjusted >> shift) << shift
 }
 
+struct ImagequantResult {
+    data: Vec<u8>,
+    palette_size: usize,
+    min_quality: u32,
+    max_quality: u32,
+    dither_level: f32,
+}
+
+struct ImagequantPaletteInfo {
+    attr: imagequant::Attributes,
+    result: imagequant::QuantizationResult,
+    palette_size: usize,
+    min_quality: u32,
+    max_quality: u32,
+    dither_level: f32,
+    target_colors: u32,
+}
+
+fn quantize_with_imagequant(
+    raw_data: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> Result<ImagequantResult, ConverterError> {
+    let mut attr = imagequant::Attributes::new();
+    // Map UI quality (0-100) to a safer imagequant target range to avoid extreme palette collapse.
+    let target_quality = ((quality as u32 * 20 / 100) + 80).clamp(70, 95) as u8;
+    let max_quality = target_quality;
+    let min_quality = max_quality.saturating_sub(2);
+    attr.set_quality(min_quality, max_quality)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let target_colors = 256;
+    attr.set_max_colors(target_colors)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let _ = attr.set_speed(3);
+    let rgba_pixels: Vec<imagequant::RGBA> = raw_data
+        .chunks_exact(4)
+        .map(|px| imagequant::RGBA {
+            r: px[0],
+            g: px[1],
+            b: px[2],
+            a: px[3],
+        })
+        .collect();
+    let mut img = attr
+        .new_image(rgba_pixels, width as usize, height as usize, 0.0)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+    let mut res = attr
+        .quantize(&mut img)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let dither_level = (quality as f32 / 100.0 * 0.2 + 0.35).clamp(0.35, 0.6);
+    let _ = res.set_dithering_level(dither_level);
+    let (palette, pixels) = res
+        .remapped(&mut img)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    for idx in pixels {
+        let c = &palette[idx as usize];
+        out.push(c.r);
+        out.push(c.g);
+        out.push(c.b);
+        out.push(c.a);
+    }
+    Ok(ImagequantResult {
+        data: out,
+        palette_size: palette.len(),
+        min_quality: min_quality as u32,
+        max_quality: max_quality as u32,
+        dither_level,
+    })
+}
+
+fn build_imagequant_palette(
+    raw_data: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> Result<ImagequantPaletteInfo, ConverterError> {
+    let mut attr = imagequant::Attributes::new();
+    let target_quality = ((quality as u32 * 20 / 100) + 80).clamp(70, 95) as u8;
+    let max_quality = target_quality;
+    let min_quality = max_quality.saturating_sub(2);
+    attr.set_quality(min_quality, max_quality)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let target_colors = 256;
+    attr.set_max_colors(target_colors)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let _ = attr.set_speed(3);
+
+    let rgba_pixels: Vec<imagequant::RGBA> = raw_data
+        .chunks_exact(4)
+        .map(|px| imagequant::RGBA {
+            r: px[0],
+            g: px[1],
+            b: px[2],
+            a: px[3],
+        })
+        .collect();
+    let mut img = attr
+        .new_image(rgba_pixels, width as usize, height as usize, 0.0)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+    let mut res = attr
+        .quantize(&mut img)
+        .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
+    let dither_level = (quality as f32 / 100.0 * 0.2 + 0.35).clamp(0.35, 0.6);
+    let _ = res.set_dithering_level(dither_level);
+    let (palette, _pixels) = res
+        .remapped(&mut img)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+
+    Ok(ImagequantPaletteInfo {
+        attr,
+        result: res,
+        palette_size: palette.len(),
+        min_quality: min_quality as u32,
+        max_quality: max_quality as u32,
+        dither_level,
+        target_colors,
+    })
+}
+
+fn remap_with_imagequant_palette(
+    info: &mut ImagequantPaletteInfo,
+    raw_data: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ConverterError> {
+    let rgba_pixels: Vec<imagequant::RGBA> = raw_data
+        .chunks_exact(4)
+        .map(|px| imagequant::RGBA {
+            r: px[0],
+            g: px[1],
+            b: px[2],
+            a: px[3],
+        })
+        .collect();
+    let mut img = info
+        .attr
+        .new_image(rgba_pixels, width as usize, height as usize, 0.0)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+    let (palette, pixels) = info
+        .result
+        .remapped(&mut img)
+        .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    for idx in pixels {
+        let c = &palette[idx as usize];
+        out.push(c.r);
+        out.push(c.g);
+        out.push(c.b);
+        out.push(c.a);
+    }
+    Ok(out)
+}
+
 fn apply_box_blur_rgb(raw_data: &mut [u8], width: u32, height: u32) {
     if width == 0 || height == 0 {
         return;
     }
     let w = width as usize;
     let h = height as usize;
-    let mut src = raw_data.to_vec();
+    let src = raw_data.to_vec();
     for y in 0..h {
         for x in 0..w {
             let mut sum_r: u32 = 0;
@@ -925,53 +1061,10 @@ fn save_as_apng_streaming(
 
     // Try FFmpeg first
     let ffmpeg_path = get_ffmpeg_path();
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run6",
-        "hypothesisId": "H1",
-        "location": "converter.rs:save_as_apng_streaming:entry",
-        "message": "apng encoder path decision",
-        "data": {
-            "lossyQuality": lossy_quality,
-            "ffmpegAvailable": ffmpeg_path.is_some(),
-            "forceRust": lossy_quality.is_some(),
-            "outputPath": output_path.to_string_lossy().to_string()
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
     if lossy_quality.is_some() {
         log::info!("Lossy APNG requested; forcing Rust encoder");
-        // #region agent log
-        write_debug_log(json!({
-            "sessionId": "debug-session",
-            "runId": "run6",
-            "hypothesisId": "H1",
-            "location": "converter.rs:save_as_apng_streaming:force_rust",
-            "message": "apng lossy forces rust encoder",
-            "data": {
-                "lossyQuality": lossy_quality
-            },
-            "timestamp": now_millis()
-        }));
-        // #endregion
     } else if let Some(ffmpeg) = &ffmpeg_path {
         log::info!("Using FFmpeg for APNG at: {}", ffmpeg);
-        // #region agent log
-        write_debug_log(json!({
-            "sessionId": "debug-session",
-            "runId": "run6",
-            "hypothesisId": "H1",
-            "location": "converter.rs:save_as_apng_streaming:ffmpeg_path",
-            "message": "apng using ffmpeg",
-            "data": {
-                "lossyQuality": lossy_quality,
-                "ffmpeg": ffmpeg
-            },
-            "timestamp": now_millis()
-        }));
-        // #endregion
         
         app.emit("convert-progress", ConvertProgressEvent {
             phase: "Converting with FFmpeg".to_string(),
@@ -1070,19 +1163,6 @@ fn save_as_apng_streaming(
         return Err(ConverterError::APNG("FFmpeg APNG failed".to_string()));
     } else {
         log::info!("FFmpeg not available for APNG, using Rust implementation");
-        // #region agent log
-        write_debug_log(json!({
-            "sessionId": "debug-session",
-            "runId": "run6",
-            "hypothesisId": "H1",
-            "location": "converter.rs:save_as_apng_streaming:rust_path",
-            "message": "apng using rust encoder",
-            "data": {
-                "lossyQuality": lossy_quality
-            },
-            "timestamp": now_millis()
-        }));
-        // #endregion
     }
 
     // Fallback to Rust implementation
@@ -1115,25 +1195,6 @@ fn save_as_apng_rust(
         Some(5) => 0.75,
         _ => 1.0,
     };
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run5",
-        "hypothesisId": "H1",
-        "location": "converter.rs:save_as_apng_streaming:lossy_setup",
-        "message": "apng lossy setup",
-        "data": {
-            "lossyQuality": lossy_quality,
-            "lossyBits": lossy_bits,
-            "dither": enable_dither,
-            "ditherMode": if enable_dither { "blue-noise" } else { "off" },
-            "ditherStrength": dither_strength,
-            "smear": enable_smear,
-            "outputPath": output_path.to_string_lossy().to_string()
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
 
     let file = fs::File::create(&temp_path)?;
     let buf_writer = std::io::BufWriter::new(file);
@@ -1147,6 +1208,7 @@ fn save_as_apng_rust(
     let mut writer = encoder.write_header()
         .map_err(|e| ConverterError::APNG(format!("Failed to write PNG header: {}", e)))?;
 
+    let mut imagequant_palette: Option<ImagequantPaletteInfo> = None;
     for (idx, path) in frame_paths.iter().enumerate() {
         wait_if_paused();
         if is_cancelled() {
@@ -1157,28 +1219,52 @@ fn save_as_apng_rust(
         let img = image::open(path)?;
         let rgba = img.to_rgba8();
         let mut raw_data = rgba.into_raw();
-        if let Some(bits) = lossy_bits {
-            if bits < 8 {
-                if enable_dither {
-                    for (i, px) in raw_data.chunks_mut(4).enumerate() {
-                        let p = i as u32;
-                        let x = p % width;
-                        let y = p / width;
-                        px[0] = blue_noise_quantize_channel(px[0], bits, x, y, dither_strength);
-                        px[1] = blue_noise_quantize_channel(px[1], bits, x, y, dither_strength);
-                        px[2] = blue_noise_quantize_channel(px[2], bits, x, y, dither_strength);
-                        // keep alpha channel unchanged
+        let mut applied_imagequant = false;
+        if let Some(q) = lossy_quality {
+            if idx == 0 && imagequant_palette.is_none() {
+                match build_imagequant_palette(&raw_data, width, height, q) {
+                    Ok(info) => {
+                        imagequant_palette = Some(info);
                     }
-                } else {
-                    for px in raw_data.chunks_mut(4) {
-                        px[0] = quantize_channel(px[0], bits);
-                        px[1] = quantize_channel(px[1], bits);
-                        px[2] = quantize_channel(px[2], bits);
-                        // keep alpha channel unchanged
+                    Err(e) => {
                     }
                 }
-                if enable_smear {
-                    apply_box_blur_rgb(&mut raw_data, width, height);
+            }
+            if let Some(ref mut palette_info) = imagequant_palette {
+                match remap_with_imagequant_palette(palette_info, &raw_data, width, height) {
+                    Ok(mapped) => {
+                        raw_data = mapped;
+                        applied_imagequant = true;
+                    }
+                    Err(e) => {
+                    }
+                }
+            }
+        }
+        if !applied_imagequant {
+            if let Some(bits) = lossy_bits {
+                if bits < 8 {
+                    if enable_dither {
+                        for (i, px) in raw_data.chunks_mut(4).enumerate() {
+                            let p = i as u32;
+                            let x = p % width;
+                            let y = p / width;
+                            px[0] = blue_noise_quantize_channel(px[0], bits, x, y, dither_strength);
+                            px[1] = blue_noise_quantize_channel(px[1], bits, x, y, dither_strength);
+                            px[2] = blue_noise_quantize_channel(px[2], bits, x, y, dither_strength);
+                            // keep alpha channel unchanged
+                        }
+                    } else {
+                        for px in raw_data.chunks_mut(4) {
+                            px[0] = quantize_channel(px[0], bits);
+                            px[1] = quantize_channel(px[1], bits);
+                            px[2] = quantize_channel(px[2], bits);
+                            // keep alpha channel unchanged
+                        }
+                    }
+                    if enable_smear {
+                        apply_box_blur_rgb(&mut raw_data, width, height);
+                    }
                 }
             }
         }
@@ -1220,23 +1306,7 @@ fn compress_locally(
         .and_then(|s| s.to_str())
         .map(|s| s.to_lowercase());
     
-    let file_size = fs::metadata(image_path).ok().map(|m| m.len());
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run2",
-        "hypothesisId": "H1",
-        "location": "converter.rs:compress_locally:entry",
-        "message": "local compression entry",
-        "data": {
-            "ext": ext,
-            "quality": _quality,
-            "outputFormat": output_format,
-            "fileSize": file_size
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
+    let _file_size = fs::metadata(image_path).ok().map(|m| m.len());
 
     let result = match ext.as_deref() {
         Some("png") | Some("apng") => {
@@ -1285,36 +1355,11 @@ fn compress_locally(
                 options.idat_recoding = true;
             }
 
-            let deflate_level = match options.deflate {
+            let _deflate_level = match options.deflate {
                 oxipng::Deflaters::Libdeflater { compression } => Some(compression),
                 #[allow(unreachable_patterns)]
                 _ => None,
             };
-
-            // #region agent log
-            write_debug_log(json!({
-                "sessionId": "debug-session",
-                "runId": "run2",
-                "hypothesisId": "H2",
-                "location": "converter.rs:compress_locally:preset",
-                "message": "oxipng options chosen",
-                "data": {
-                    "preset": preset,
-                    "inputLen": input_bytes.len(),
-                    "strip": format!("{:?}", options.strip),
-                    "optimizeAlpha": options.optimize_alpha,
-                    "fastEvaluation": options.fast_evaluation,
-                    "deflateCompression": deflate_level,
-                    "bitDepthReduction": options.bit_depth_reduction,
-                    "colorTypeReduction": options.color_type_reduction,
-                    "paletteReduction": options.palette_reduction,
-                    "grayscaleReduction": options.grayscale_reduction,
-                    "idatRecoding": options.idat_recoding
-                },
-                "timestamp": now_millis()
-            }));
-            // #endregion
-
             let optimized = oxipng::optimize_from_memory(&input_bytes, &options)
                 .map_err(|e| ConverterError::InvalidFormat(format!("oxipng error: {}", e)))?;
             Ok(optimized)
@@ -1344,23 +1389,7 @@ fn compress_locally(
         }
     };
 
-    if let Ok(ref data) = result {
-        // #region agent log
-        write_debug_log(json!({
-            "sessionId": "debug-session",
-            "runId": "run2",
-            "hypothesisId": "H3",
-            "location": "converter.rs:compress_locally:exit",
-            "message": "local compression result",
-            "data": {
-                "ext": ext,
-                "outputFormat": output_format,
-                "outputLen": data.len()
-            },
-            "timestamp": now_millis()
-        }));
-        // #endregion
-    }
+    let _ = result.as_ref().map(|data| data.len());
 
     result
 }
@@ -1393,19 +1422,6 @@ async fn compress_with_tinypng(
         return Err(ConverterError::Api(format!("API error: {}", error_text)));
     }
 
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run4",
-        "hypothesisId": "H3",
-        "location": "converter.rs:compress_with_tinypng:shrink_ok",
-        "message": "tinypng shrink ok",
-        "data": {
-            "status": response.status().as_u16()
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
 
     let response_json: serde_json::Value = response
         .json()
@@ -1429,19 +1445,6 @@ async fn compress_with_tinypng(
         .await
         .map_err(|e| ConverterError::Api(e.to_string()))?;
 
-    // #region agent log
-    write_debug_log(json!({
-        "sessionId": "debug-session",
-        "runId": "run4",
-        "hypothesisId": "H3",
-        "location": "converter.rs:compress_with_tinypng:downloaded",
-        "message": "tinypng data downloaded",
-        "data": {
-            "bytesLen": compressed_data.len()
-        },
-        "timestamp": now_millis()
-    }));
-    // #endregion
 
     Ok(compressed_data.to_vec())
 }
@@ -1557,35 +1560,7 @@ pub async fn convert_sequence_frames(
                     if let Some(ref api_key) = request.api_key {
                         // TinyPNG does not support APNG; fall back to local for APNG.
                         if format == "apng" {
-                            // #region agent log
-                            write_debug_log(json!({
-                                "sessionId": "debug-session",
-                                "runId": "run4",
-                                "hypothesisId": "H1",
-                                "location": "converter.rs:convert_sequence_frames:tinypng_skipped",
-                                "message": "tinypng skipped for apng",
-                                "data": {
-                                    "format": format,
-                                    "outputPath": output_path.to_string_lossy().to_string()
-                                },
-                                "timestamp": now_millis()
-                            }));
-                            // #endregion
                         } else {
-                            // #region agent log
-                            write_debug_log(json!({
-                                "sessionId": "debug-session",
-                                "runId": "run4",
-                                "hypothesisId": "H2",
-                                "location": "converter.rs:convert_sequence_frames:tinypng_start",
-                                "message": "tinypng compression start",
-                                "data": {
-                                    "format": format,
-                                    "outputPath": output_path.to_string_lossy().to_string()
-                                },
-                                "timestamp": now_millis()
-                            }));
-                            // #endregion
                         }
                         // Use TinyPNG API
                         let tinypng_result = if format == "apng" {
@@ -1601,20 +1576,6 @@ pub async fn convert_sequence_frames(
                                     compressed_size = fs::metadata(&output_path)
                                         .ok()
                                         .map(|m| m.len());
-                                    // #region agent log
-                                    write_debug_log(json!({
-                                        "sessionId": "debug-session",
-                                        "runId": "run4",
-                                        "hypothesisId": "H2",
-                                        "location": "converter.rs:convert_sequence_frames:tinypng_done",
-                                        "message": "tinypng compression done",
-                                        "data": {
-                                            "outputPath": output_path.to_string_lossy().to_string(),
-                                            "compressedSize": compressed_size
-                                        },
-                                        "timestamp": now_millis()
-                                    }));
-                                    // #endregion
                                 }
                             }
                             Err(e) => {
@@ -1646,25 +1607,6 @@ pub async fn convert_sequence_frames(
                         format: Some(format.clone()),
                         file: Some(output_path.to_string_lossy().to_string()),
                     }).ok();
-                    // #region agent log
-                    write_debug_log(json!({
-                        "sessionId": "debug-session",
-                        "runId": "run4",
-                        "hypothesisId": "H4",
-                        "location": "converter.rs:convert_sequence_frames:compression_summary",
-                        "message": "compression size summary",
-                        "data": {
-                            "format": format,
-                            "outputPath": output_path.to_string_lossy().to_string(),
-                            "originalSize": original_size,
-                            "compressedSize": compressed_size,
-                            "quality": request.compression_quality,
-                            "useLocalCompression": request.use_local_compression,
-                            "hasApiKey": request.api_key.is_some()
-                        },
-                        "timestamp": now_millis()
-                    }));
-                    // #endregion
                 }
 
                 results.push(ConvertResult {
