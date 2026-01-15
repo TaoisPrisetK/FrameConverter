@@ -845,102 +845,28 @@ fn quantize_channel(value: u8, bits: u8) -> u8 {
     }
 }
 
-fn apply_floyd_steinberg_dither(
-    raw_data: &mut [u8],
-    width: u32,
-    height: u32,
-    bits: u8,
-    strength: f32,
-) {
-    if bits >= 8 || width == 0 || height == 0 {
-        return;
+const BLUE_NOISE_8X8: [[u8; 8]; 8] = [
+    [0, 48, 12, 60, 3, 51, 15, 63],
+    [32, 16, 44, 28, 35, 19, 47, 31],
+    [8, 56, 4, 52, 11, 59, 7, 55],
+    [40, 24, 36, 20, 43, 27, 39, 23],
+    [2, 50, 14, 62, 1, 49, 13, 61],
+    [34, 18, 46, 30, 33, 17, 45, 29],
+    [10, 58, 6, 54, 9, 57, 5, 53],
+    [42, 26, 38, 22, 41, 25, 37, 21],
+];
+
+fn blue_noise_quantize_channel(value: u8, bits: u8, x: u32, y: u32, strength: f32) -> u8 {
+    if bits >= 8 {
+        return value;
     }
-    let w = width as usize;
-    let mut err_r = vec![0i32; w + 2];
-    let mut err_g = vec![0i32; w + 2];
-    let mut err_b = vec![0i32; w + 2];
-    let mut next_err_r = vec![0i32; w + 2];
-    let mut next_err_g = vec![0i32; w + 2];
-    let mut next_err_b = vec![0i32; w + 2];
-
-    for y in 0..height as usize {
-        let serpentine = (y % 2) == 1;
-        let x_range: Box<dyn Iterator<Item = usize>> = if serpentine {
-            Box::new((0..w).rev())
-        } else {
-            Box::new(0..w)
-        };
-        for x in x_range {
-            let idx = (y * w + x) * 4;
-            let r = raw_data[idx] as i32;
-            let g = raw_data[idx + 1] as i32;
-            let b = raw_data[idx + 2] as i32;
-
-            let r_adj = (r * 16 + err_r[x + 1]).clamp(0, 255 * 16) / 16;
-            let g_adj = (g * 16 + err_g[x + 1]).clamp(0, 255 * 16) / 16;
-            let b_adj = (b * 16 + err_b[x + 1]).clamp(0, 255 * 16) / 16;
-
-            let r_q = quantize_channel(r_adj as u8, bits) as i32;
-            let g_q = quantize_channel(g_adj as u8, bits) as i32;
-            let b_q = quantize_channel(b_adj as u8, bits) as i32;
-
-            raw_data[idx] = r_q as u8;
-            raw_data[idx + 1] = g_q as u8;
-            raw_data[idx + 2] = b_q as u8;
-
-            let r_err = ((r_adj - r_q) as f32 * strength) as i32;
-            let g_err = ((g_adj - g_q) as f32 * strength) as i32;
-            let b_err = ((b_adj - b_q) as f32 * strength) as i32;
-
-            // Distribute error (weights are 7/16, 3/16, 5/16, 1/16)
-            if serpentine {
-                if x > 0 {
-                    err_r[x] += r_err * 7;
-                    err_g[x] += g_err * 7;
-                    err_b[x] += b_err * 7;
-                }
-            } else {
-                err_r[x + 2] += r_err * 7;
-                err_g[x + 2] += g_err * 7;
-                err_b[x + 2] += b_err * 7;
-            }
-
-            if serpentine {
-                if x + 1 < w {
-                    next_err_r[x + 2] += r_err * 3;
-                    next_err_g[x + 2] += g_err * 3;
-                    next_err_b[x + 2] += b_err * 3;
-                }
-                next_err_r[x + 1] += r_err * 5;
-                next_err_g[x + 1] += g_err * 5;
-                next_err_b[x + 1] += b_err * 5;
-                if x > 0 {
-                    next_err_r[x] += r_err;
-                    next_err_g[x] += g_err;
-                    next_err_b[x] += b_err;
-                }
-            } else {
-                if x > 0 {
-                    next_err_r[x] += r_err * 3;
-                    next_err_g[x] += g_err * 3;
-                    next_err_b[x] += b_err * 3;
-                }
-                next_err_r[x + 1] += r_err * 5;
-                next_err_g[x + 1] += g_err * 5;
-                next_err_b[x + 1] += b_err * 5;
-                next_err_r[x + 2] += r_err;
-                next_err_g[x + 2] += g_err;
-                next_err_b[x + 2] += b_err;
-            }
-        }
-
-        err_r.fill(0);
-        err_g.fill(0);
-        err_b.fill(0);
-        std::mem::swap(&mut err_r, &mut next_err_r);
-        std::mem::swap(&mut err_g, &mut next_err_g);
-        std::mem::swap(&mut err_b, &mut next_err_b);
-    }
+    let shift = 8 - bits;
+    let step = 1u16 << shift;
+    let n = BLUE_NOISE_8X8[(y % 8) as usize][(x % 8) as usize] as i16; // 0..63
+    let centered = n - 31;
+    let jitter = (centered as f32 * (step as f32) / 64.0 * strength) as i16;
+    let adjusted = (value as i16 + jitter).clamp(0, 255) as u8;
+    (adjusted >> shift) << shift
 }
 
 fn save_as_apng_streaming(
@@ -1143,11 +1069,11 @@ fn save_as_apng_rust(
     let delay_den = fps as u16;
 
     let lossy_bits = lossy_quality.map(apng_lossy_bits);
-    // With 5-bit minimum, dithering is usually unnecessary and can add dot artifacts.
-    let enable_dither = lossy_bits.map(|b| b <= 4).unwrap_or(false);
+    let enable_dither = lossy_bits.map(|b| b <= 5).unwrap_or(false);
     let dither_strength = match lossy_bits {
-        Some(4) => 0.65,
-        Some(5) => 0.85,
+        Some(3) => 0.45,
+        Some(4) => 0.6,
+        Some(5) => 0.75,
         _ => 1.0,
     };
     // #region agent log
@@ -1161,7 +1087,7 @@ fn save_as_apng_rust(
             "lossyQuality": lossy_quality,
             "lossyBits": lossy_bits,
             "dither": enable_dither,
-            "ditherMode": if enable_dither { "floyd-steinberg" } else { "off" },
+            "ditherMode": if enable_dither { "blue-noise" } else { "off" },
             "ditherStrength": dither_strength,
             "outputPath": output_path.to_string_lossy().to_string()
         },
@@ -1194,13 +1120,15 @@ fn save_as_apng_rust(
         if let Some(bits) = lossy_bits {
             if bits < 8 {
                 if enable_dither {
-                    apply_floyd_steinberg_dither(
-                        &mut raw_data,
-                        width,
-                        height,
-                        bits,
-                        dither_strength,
-                    );
+                    for (i, px) in raw_data.chunks_mut(4).enumerate() {
+                        let p = i as u32;
+                        let x = p % width;
+                        let y = p / width;
+                        px[0] = blue_noise_quantize_channel(px[0], bits, x, y, dither_strength);
+                        px[1] = blue_noise_quantize_channel(px[1], bits, x, y, dither_strength);
+                        px[2] = blue_noise_quantize_channel(px[2], bits, x, y, dither_strength);
+                        // keep alpha channel unchanged
+                    }
                 } else {
                     for px in raw_data.chunks_mut(4) {
                         px[0] = quantize_channel(px[0], bits);
