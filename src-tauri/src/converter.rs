@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use image::{ImageFormat, GenericImageView};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::Emitter;
 use walkdir::WalkDir;
 use thiserror::Error;
@@ -33,6 +36,23 @@ fn make_unique_temp_dir(prefix: &str) -> Result<PathBuf, std::io::Error> {
     let base = std::env::temp_dir().join(format!("frame_converter_{}_{}_{}", prefix, pid, ts));
     fs::create_dir_all(&base)?;
     Ok(base)
+}
+
+fn write_debug_log(payload: serde_json::Value) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Users/ks10/Desktop/Cursor/Tool/FrameConverter/.cursor/debug.log")
+    {
+        let _ = writeln!(file, "{}", payload.to_string());
+    }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn prepare_ffmpeg_sequence_input(frame_paths: &[String], prefix: &str) -> Result<(PathBuf, String), ConverterError> {
@@ -995,17 +1015,73 @@ fn compress_locally(
         .and_then(|s| s.to_str())
         .map(|s| s.to_lowercase());
     
-    match ext.as_deref() {
+    let file_size = fs::metadata(image_path).ok().map(|m| m.len());
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "H4",
+        "location": "converter.rs:compress_locally:entry",
+        "message": "local compression entry",
+        "data": {
+            "ext": ext,
+            "quality": _quality,
+            "fileSize": file_size
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
+
+    let result = match ext.as_deref() {
         Some("png") | Some("apng") => {
-            // Re-encode PNG with different quality using image crate
-            let img = image::open(image_path)?;
-            let _rgba = img.to_rgba8();
-            let (_width, _height) = img.dimensions();
-            
-            // Create a new PNG with quality adjustment
-            // Note: PNG is lossless, so we'll just return the original
-            // For actual compression, would need to use oxipng command-line tool
-            Ok(fs::read(image_path)?)
+            let input_bytes = fs::read(image_path)?;
+            let preset = if _quality >= 80 {
+                2
+            } else if _quality >= 60 {
+                3
+            } else if _quality >= 40 {
+                4
+            } else if _quality >= 20 {
+                5
+            } else {
+                6
+            };
+
+            // #region agent log
+            write_debug_log(json!({
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H4",
+                "location": "converter.rs:compress_locally:oxipng_start",
+                "message": "oxipng optimize start",
+                "data": {
+                    "preset": preset,
+                    "inputLen": input_bytes.len()
+                },
+                "timestamp": now_millis()
+            }));
+            // #endregion
+
+            let options = oxipng::Options::from_preset(preset);
+            let optimized = oxipng::optimize_from_memory(&input_bytes, &options)
+                .map_err(|e| ConverterError::InvalidFormat(format!("oxipng error: {}", e)))?;
+
+            // #region agent log
+            write_debug_log(json!({
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H4",
+                "location": "converter.rs:compress_locally:oxipng_done",
+                "message": "oxipng optimize done",
+                "data": {
+                    "preset": preset,
+                    "outputLen": optimized.len()
+                },
+                "timestamp": now_millis()
+            }));
+            // #endregion
+
+            Ok(optimized)
         }
         Some("webp") => {
             // Re-encode WebP with different quality
@@ -1030,7 +1106,26 @@ fn compress_locally(
             // Unknown format, return original
             Ok(fs::read(image_path)?)
         }
+    };
+
+    if let Ok(ref data) = result {
+        // #region agent log
+        write_debug_log(json!({
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "H4",
+            "location": "converter.rs:compress_locally:exit",
+            "message": "local compression result",
+            "data": {
+                "ext": ext,
+                "outputLen": data.len()
+            },
+            "timestamp": now_millis()
+        }));
+        // #endregion
     }
+
+    result
 }
 
 async fn compress_with_tinypng(
@@ -1061,6 +1156,20 @@ async fn compress_with_tinypng(
         return Err(ConverterError::Api(format!("API error: {}", error_text)));
     }
 
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "H3",
+        "location": "converter.rs:compress_with_tinypng:shrink_ok",
+        "message": "tinypng shrink ok",
+        "data": {
+            "status": response.status().as_u16()
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
+
     let response_json: serde_json::Value = response
         .json()
         .await
@@ -1083,6 +1192,20 @@ async fn compress_with_tinypng(
         .await
         .map_err(|e| ConverterError::Api(e.to_string()))?;
 
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "H3",
+        "location": "converter.rs:compress_with_tinypng:downloaded",
+        "message": "tinypng data downloaded",
+        "data": {
+            "bytesLen": compressed_data.len()
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
+
     Ok(compressed_data.to_vec())
 }
 
@@ -1091,6 +1214,24 @@ pub async fn convert_sequence_frames(
     app: tauri::AppHandle,
     request: ConvertRequest,
 ) -> Result<Vec<ConvertResult>, String> {
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "H1",
+        "location": "converter.rs:convert_sequence_frames:entry",
+        "message": "convert request flags",
+        "data": {
+            "inputMode": request.input_mode,
+            "useLocalCompression": request.use_local_compression,
+            "hasApiKey": request.api_key.is_some(),
+            "compressionQuality": request.compression_quality,
+            "formats": request.formats,
+            "outputDir": request.output_dir
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
     let scan_result = scan_frame_files(
         request.input_mode.clone(),
         request.input_path.clone(),
@@ -1172,6 +1313,23 @@ pub async fn convert_sequence_frames(
 
                 // Apply compression if requested
                 if request.use_local_compression || request.api_key.is_some() {
+                    // #region agent log
+                    write_debug_log(json!({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H2",
+                        "location": "converter.rs:convert_sequence_frames:compression_check",
+                        "message": "compression requested",
+                        "data": {
+                            "format": format,
+                            "outputPath": output_path.to_string_lossy().to_string(),
+                            "originalSize": original_size,
+                            "useLocalCompression": request.use_local_compression,
+                            "hasApiKey": request.api_key.is_some()
+                        },
+                        "timestamp": now_millis()
+                    }));
+                    // #endregion
                     if let Some(ref api_key) = request.api_key {
                         // Use TinyPNG API
                         match compress_with_tinypng(api_key, &output_path).await {
@@ -1183,6 +1341,20 @@ pub async fn convert_sequence_frames(
                                     compressed_size = fs::metadata(&compressed_path)
                                         .ok()
                                         .map(|m| m.len());
+                                    // #region agent log
+                                    write_debug_log(json!({
+                                        "sessionId": "debug-session",
+                                        "runId": "run1",
+                                        "hypothesisId": "H3",
+                                        "location": "converter.rs:convert_sequence_frames:tinypng_written",
+                                        "message": "tinypng compressed file written",
+                                        "data": {
+                                            "compressedPath": compressed_path.to_string_lossy().to_string(),
+                                            "compressedSize": compressed_size
+                                        },
+                                        "timestamp": now_millis()
+                                    }));
+                                    // #endregion
                                 }
                             }
                             Err(e) => {
@@ -1200,6 +1372,20 @@ pub async fn convert_sequence_frames(
                                     compressed_size = fs::metadata(&compressed_path)
                                         .ok()
                                         .map(|m| m.len());
+                                    // #region agent log
+                                    write_debug_log(json!({
+                                        "sessionId": "debug-session",
+                                        "runId": "run1",
+                                        "hypothesisId": "H4",
+                                        "location": "converter.rs:convert_sequence_frames:local_written",
+                                        "message": "local compressed file written",
+                                        "data": {
+                                            "compressedPath": compressed_path.to_string_lossy().to_string(),
+                                            "compressedSize": compressed_size
+                                        },
+                                        "timestamp": now_millis()
+                                    }));
+                                    // #endregion
                                 }
                             }
                             Err(e) => {
@@ -1207,6 +1393,21 @@ pub async fn convert_sequence_frames(
                             }
                         }
                     }
+                } else {
+                    // #region agent log
+                    write_debug_log(json!({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H1",
+                        "location": "converter.rs:convert_sequence_frames:compression_skipped",
+                        "message": "compression not requested",
+                        "data": {
+                            "format": format,
+                            "outputPath": output_path.to_string_lossy().to_string()
+                        },
+                        "timestamp": now_millis()
+                    }));
+                    // #endregion
                 }
 
                 results.push(ConvertResult {
