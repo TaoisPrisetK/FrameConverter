@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use image::{ImageFormat, GenericImageView};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::Emitter;
 use walkdir::WalkDir;
 use thiserror::Error;
@@ -33,6 +36,23 @@ fn make_unique_temp_dir(prefix: &str) -> Result<PathBuf, std::io::Error> {
     let base = std::env::temp_dir().join(format!("frame_converter_{}_{}_{}", prefix, pid, ts));
     fs::create_dir_all(&base)?;
     Ok(base)
+}
+
+fn write_debug_log(payload: serde_json::Value) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Users/ks10/Desktop/Cursor/Tool/FrameConverter/.cursor/debug.log")
+    {
+        let _ = writeln!(file, "{}", payload.to_string());
+    }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 
@@ -866,6 +886,8 @@ struct ImagequantPaletteInfo {
     max_quality: u32,
     dither_level: f32,
     target_colors: u32,
+    min_posterization: u8,
+    speed: u8,
 }
 
 fn quantize_with_imagequant(
@@ -876,15 +898,18 @@ fn quantize_with_imagequant(
 ) -> Result<ImagequantResult, ConverterError> {
     let mut attr = imagequant::Attributes::new();
     // Map UI quality (0-100) to a safer imagequant target range to avoid extreme palette collapse.
-    let target_quality = ((quality as u32 * 20 / 100) + 80).clamp(70, 95) as u8;
+    let target_quality = ((quality as u32 * 35 / 100) + 45).clamp(40, 90) as u8;
     let max_quality = target_quality;
-    let min_quality = max_quality.saturating_sub(2);
+    let min_quality = max_quality.saturating_sub(10);
     attr.set_quality(min_quality, max_quality)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let target_colors = 256;
+    let target_colors = ((quality as u32 * 96 / 100) + 64).clamp(64, 192);
     attr.set_max_colors(target_colors)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let _ = attr.set_speed(3);
+    let speed = (10 - (quality / 10)).clamp(3, 9) as i32;
+    let _ = attr.set_speed(speed);
+    let min_posterization = 0;
+    let _ = attr.set_min_posterization(min_posterization);
     let rgba_pixels: Vec<imagequant::RGBA> = raw_data
         .chunks_exact(4)
         .map(|px| imagequant::RGBA {
@@ -900,7 +925,7 @@ fn quantize_with_imagequant(
     let mut res = attr
         .quantize(&mut img)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let dither_level = (quality as f32 / 100.0 * 0.2 + 0.35).clamp(0.35, 0.6);
+    let dither_level = (quality as f32 / 100.0 * 0.3 + 0.35).clamp(0.35, 0.65);
     let _ = res.set_dithering_level(dither_level);
     let (palette, pixels) = res
         .remapped(&mut img)
@@ -929,15 +954,25 @@ fn build_imagequant_palette(
     quality: u8,
 ) -> Result<ImagequantPaletteInfo, ConverterError> {
     let mut attr = imagequant::Attributes::new();
-    let target_quality = ((quality as u32 * 20 / 100) + 80).clamp(70, 95) as u8;
+    let target_quality = ((quality as u32 * 15 / 100) + 30).clamp(20, 60) as u8;
     let max_quality = target_quality;
-    let min_quality = max_quality.saturating_sub(2);
+    let min_quality = max_quality.saturating_sub(5);
     attr.set_quality(min_quality, max_quality)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let target_colors = 256;
+    let base_colors = if quality <= 10 {
+        16
+    } else if quality <= 20 {
+        24
+    } else {
+        (quality as u32 * 32 / 100) + 24
+    };
+    let target_colors = base_colors.clamp(16, 64);
     attr.set_max_colors(target_colors)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let _ = attr.set_speed(3);
+    let speed = (10 - (quality / 30)).clamp(6, 10) as i32;
+    let _ = attr.set_speed(speed);
+    let min_posterization = 0;
+    let _ = attr.set_min_posterization(min_posterization);
 
     let rgba_pixels: Vec<imagequant::RGBA> = raw_data
         .chunks_exact(4)
@@ -954,11 +989,36 @@ fn build_imagequant_palette(
     let mut res = attr
         .quantize(&mut img)
         .map_err(|e| ConverterError::InvalidFormat(e.to_string()))?;
-    let dither_level = (quality as f32 / 100.0 * 0.2 + 0.35).clamp(0.35, 0.6);
+    let dither_level = if quality <= 10 {
+        0.0
+    } else {
+        (quality as f32 / 100.0 * 0.1 + 0.15).clamp(0.15, 0.4)
+    };
     let _ = res.set_dithering_level(dither_level);
     let (palette, _pixels) = res
         .remapped(&mut img)
         .map_err(|e: imagequant::Error| ConverterError::InvalidFormat(e.to_string()))?;
+
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run8",
+        "hypothesisId": "H1",
+        "location": "converter.rs:build_imagequant_palette",
+        "message": "imagequant palette settings",
+        "data": {
+            "quality": quality,
+            "minQuality": min_quality,
+            "maxQuality": max_quality,
+            "targetColors": target_colors,
+            "ditherLevel": dither_level,
+            "paletteSize": palette.len(),
+            "minPosterization": min_posterization,
+            "speed": speed
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
 
     Ok(ImagequantPaletteInfo {
         attr,
@@ -968,6 +1028,8 @@ fn build_imagequant_palette(
         max_quality: max_quality as u32,
         dither_level,
         target_colors,
+        min_posterization,
+        speed: speed as u8,
     })
 }
 
@@ -1002,6 +1064,20 @@ fn remap_with_imagequant_palette(
         out.push(c.b);
         out.push(c.a);
     }
+    // #region agent log
+    write_debug_log(json!({
+        "sessionId": "debug-session",
+        "runId": "run8",
+        "hypothesisId": "H2",
+        "location": "converter.rs:remap_with_imagequant_palette",
+        "message": "imagequant remap result",
+        "data": {
+            "paletteSize": info.palette_size,
+            "outputLen": out.len()
+        },
+        "timestamp": now_millis()
+    }));
+    // #endregion
     Ok(out)
 }
 
@@ -1221,6 +1297,24 @@ fn save_as_apng_rust(
         let mut raw_data = rgba.into_raw();
         let mut applied_imagequant = false;
         if let Some(q) = lossy_quality {
+            if idx == 0 {
+                // #region agent log
+                write_debug_log(json!({
+                    "sessionId": "debug-session",
+                    "runId": "run8",
+                    "hypothesisId": "H3",
+                    "location": "converter.rs:save_as_apng_rust:frame0",
+                    "message": "first frame before imagequant",
+                    "data": {
+                        "quality": q,
+                        "width": width,
+                        "height": height,
+                        "rawLen": raw_data.len()
+                    },
+                    "timestamp": now_millis()
+                }));
+                // #endregion
+            }
             if idx == 0 && imagequant_palette.is_none() {
                 match build_imagequant_palette(&raw_data, width, height, q) {
                     Ok(info) => {
@@ -1237,9 +1331,42 @@ fn save_as_apng_rust(
                         applied_imagequant = true;
                     }
                     Err(e) => {
+                        if idx <= 2 {
+                            // #region agent log
+                            write_debug_log(json!({
+                                "sessionId": "debug-session",
+                                "runId": "run9",
+                                "hypothesisId": "H2",
+                                "location": "converter.rs:save_as_apng_rust:remap_fail",
+                                "message": "remap failed, will fallback",
+                                "data": {
+                                    "frameIndex": idx,
+                                    "error": e.to_string()
+                                },
+                                "timestamp": now_millis()
+                            }));
+                            // #endregion
+                        }
                     }
                 }
             }
+        }
+        if idx <= 2 {
+            // #region agent log
+            write_debug_log(json!({
+                "sessionId": "debug-session",
+                "runId": "run9",
+                "hypothesisId": "H3",
+                "location": "converter.rs:save_as_apng_rust:frame_post",
+                "message": "frame post-quant",
+                "data": {
+                    "frameIndex": idx,
+                    "appliedImagequant": applied_imagequant,
+                    "paletteSize": imagequant_palette.as_ref().map(|p| p.palette_size)
+                },
+                "timestamp": now_millis()
+            }));
+            // #endregion
         }
         if !applied_imagequant {
             if let Some(bits) = lossy_bits {
