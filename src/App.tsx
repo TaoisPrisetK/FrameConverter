@@ -61,8 +61,8 @@ export default function App() {
   const [outputName, setOutputName] = useState<string>('')
   const [fps, setFps] = useState<string>('30')
   const [loopCount, setLoopCount] = useState<string>('0')
-  const [formats, setFormats] = useState<string[]>(['webp'])
-  const [useLocalCompression, setUseLocalCompression] = useState<boolean>(true)
+  const [formats, setFormats] = useState<string[]>(['apng'])
+  const [useLocalCompression, setUseLocalCompression] = useState<boolean>(false)
   const [compressionQuality, setCompressionQuality] = useState<string>('80')
 
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
@@ -468,7 +468,7 @@ export default function App() {
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">Output Formats</div>
                   <div className="flex flex-col gap-2">
-                    {['webp', 'apng', 'gif'].map((format) => (
+                    {['apng', 'webp', 'gif'].map((format) => (
                       <div key={format} className="flex items-center space-x-2">
                         <Checkbox
                           id={format}
@@ -515,109 +515,96 @@ export default function App() {
             </Card>
           </motion.div>
 
-          <motion.div {...fadeUp} className="w-full">
-            <Card className="bg-white/[0.03]">
-              <CardHeader className="flex-row items-start justify-between gap-6 space-y-0">
-                <div className="min-w-0 flex flex-col space-y-1.5">
-                  <CardTitle className="flex items-center gap-2">
-                    <Play className="h-5 w-5 opacity-70" />
-                    Convert
-                  </CardTitle>
-                  <CardDescription>Start conversion process</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
-                  {canConvert ? (
-                    <button className="cta-plain cta-pill transition-opacity" disabled={!canConvert} onClick={startConvert} type="button">
-                      <Play className="h-5 w-5" />
-                      {isConverting ? 'Converting...' : 'Convert'}
-                    </button>
-                  ) : (
-                    <Button className="h-16 w-full text-lg font-semibold bg-white/10 text-white/45 hover:bg-white/10" disabled>
-                      <Play className="h-5 w-5" />
-                      Convert
-                    </Button>
-                  )}
-                </div>
+          <motion.div {...fadeUp} className="w-full space-y-4">
+            <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
+              {canConvert ? (
+                <button className="cta-plain cta-pill transition-opacity" disabled={!canConvert} onClick={startConvert} type="button">
+                  <Play className="h-5 w-5" />
+                  {isConverting ? 'Converting...' : 'Convert'}
+                </button>
+              ) : (
+                <Button className="h-16 w-full text-lg font-semibold bg-white/10 text-white/45 hover:bg-white/10" disabled>
+                  <Play className="h-5 w-5" />
+                  Convert
+                </Button>
+              )}
+            </div>
 
-                {isConverting && (
-                  <div className="rounded-md bg-white/5 p-4 text-sm space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {!isPaused && <div className="h-4 w-4 border-2 border-white/30 border-t-[#55B2F9] rounded-full animate-spin" />}
-                        {isPaused && <Pause className="h-4 w-4 text-yellow-500" />}
-                        <span className="font-semibold">
-                          {isPaused ? 'Paused' : (progress ? progress.phase : 'Starting conversion...')}
-                          {progress?.format && <span className="ml-2 text-white/45">({progress.format})</span>}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={togglePause}
-                          className="px-3 py-1 rounded bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 text-xs font-medium transition-colors"
-                        >
-                          {isPaused ? <><Play className="h-3 w-3 inline mr-1" />Resume</> : <><Pause className="h-3 w-3 inline mr-1" />Pause</>}
-                        </button>
-                        <button
-                          onClick={cancelConvert}
-                          className="px-3 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-medium transition-colors"
-                        >
-                          <Square className="h-3 w-3 inline mr-1" />Cancel
-                        </button>
-                      </div>
+            {isConverting && (
+              <div className="rounded-md bg-white/5 p-4 text-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {!isPaused && <div className="h-4 w-4 border-2 border-white/30 border-t-[#55B2F9] rounded-full animate-spin" />}
+                    {isPaused && <Pause className="h-4 w-4 text-yellow-500" />}
+                    <span className="font-semibold">
+                      {isPaused ? 'Paused' : (progress ? progress.phase : 'Starting conversion...')}
+                      {progress?.format && <span className="ml-2 text-white/45">({progress.format})</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={togglePause}
+                      className="px-3 py-1 rounded bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 text-xs font-medium transition-colors"
+                    >
+                      {isPaused ? <><Play className="h-3 w-3 inline mr-1" />Resume</> : <><Pause className="h-3 w-3 inline mr-1" />Pause</>}
+                    </button>
+                    <button
+                      onClick={cancelConvert}
+                      className="px-3 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-medium transition-colors"
+                    >
+                      <Square className="h-3 w-3 inline mr-1" />Cancel
+                    </button>
+                  </div>
+                </div>
+                {progress && (
+                  <div className="space-y-1">
+                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-[#55B2F9] transition-all duration-100"
+                        style={{ width: `${Math.min(progress.percent || 0, 100)}%` }}
+                      />
                     </div>
-                    {progress && (
-                      <div className="space-y-1">
-                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-[#55B2F9] transition-all duration-100"
-                            style={{ width: `${Math.min(progress.percent || 0, 100)}%` }}
-                          />
-                        </div>
-                        <div className="text-xs text-white/45 text-right">
-                          <span className="text-white/80 font-medium">{Math.round(progress.percent || 0)}%</span>
-                          {progress.total > 0 && <span className="ml-2">({progress.current} / {progress.total})</span>}
-                        </div>
+                    <div className="text-xs text-white/45 text-right">
+                      <span className="text-white/80 font-medium">{Math.round(progress.percent || 0)}%</span>
+                      {progress.total > 0 && <span className="ml-2">({progress.current} / {progress.total})</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {results.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-semibold">Results:</div>
+                {results.map((result, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between rounded-md bg-white/5 p-3 text-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      {result.success ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      )}
+                      <span className="font-semibold">{result.format.toUpperCase()}</span>
+                      <span className="text-white/60 truncate">{result.path}</span>
+                    </div>
+                    {result.success && result.originalSize && (
+                      <div className="text-xs text-white/45">
+                        {result.compressedSize ? (
+                          <>
+                            {((result.compressedSize / result.originalSize) * 100).toFixed(1)}% of original
+                          </>
+                        ) : (
+                          <>{(result.originalSize / 1024).toFixed(1)} KB</>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-
-                {results.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold">Results:</div>
-                    {results.map((result, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between rounded-md bg-white/5 p-3 text-sm"
-                      >
-                        <div className="flex items-center gap-2">
-                          {result.success ? (
-                            <CheckCircle2 className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-red-500" />
-                          )}
-                          <span className="font-semibold">{result.format.toUpperCase()}</span>
-                          <span className="text-white/60 truncate">{result.path}</span>
-                        </div>
-                        {result.success && result.originalSize && (
-                          <div className="text-xs text-white/45">
-                            {result.compressedSize ? (
-                              <>
-                                {((result.compressedSize / result.originalSize) * 100).toFixed(1)}% of original
-                              </>
-                            ) : (
-                              <>{(result.originalSize / 1024).toFixed(1)} KB</>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                ))}
+              </div>
+            )}
           </motion.div>
         </div>
       </div>
