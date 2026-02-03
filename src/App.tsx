@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Play, Settings2, XCircle, CheckCircle2, Folder, Pause, Square } from 'lucide-react'
+import { Play, Settings2, XCircle, CheckCircle2, Folder, Pause, Square, Sun, Moon } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 import { Button } from '@/components/ui/button'
@@ -54,6 +54,7 @@ function getBaseName(path: string): string {
 }
 
 export default function App() {
+  const [isDarkMode, setIsDarkMode] = useState(true)
   const [inputPath, setInputPath] = useState<string>('')
   const [inputPaths, setInputPaths] = useState<string[]>([])
   const [isFolder, setIsFolder] = useState<boolean>(false)
@@ -72,11 +73,14 @@ export default function App() {
   const [results, setResults] = useState<ConvertResult[]>([])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
   const dialogInFlightRef = useRef<{ input: boolean; inputFolder: boolean; outputDir: boolean }>({
     input: false,
     inputFolder: false,
     outputDir: false,
   })
+
+
   const [isPickingInput, setIsPickingInput] = useState(false)
   const [isPickingInputFolder, setIsPickingInputFolder] = useState(false)
   const [isPickingOutputDir, setIsPickingOutputDir] = useState(false)
@@ -318,6 +322,7 @@ export default function App() {
     return () => el.removeEventListener('mousedown', onMouseDown)
   }, [])
 
+
   const toggleFormat = (format: string) => {
     setFormats((prev) =>
       prev.includes(format) ? prev.filter((f) => f !== format) : [...prev, format]
@@ -333,29 +338,78 @@ export default function App() {
   }
 
   return (
-    <div ref={containerRef} className="h-full w-full">
+    <div
+      ref={containerRef}
+      className={`relative h-full w-full ${isDarkMode ? 'text-white' : 'text-black'} theme-${isDarkMode ? 'dark' : 'light'}`}
+      style={{
+        background: isDarkMode ? 'none' : '#ffffff',
+      }}
+      data-theme={isDarkMode ? 'dark' : 'light'}
+    >
+      <div
+        ref={overlayRef}
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: isDarkMode ? 0.15 : 0.18,
+          backgroundImage: isDarkMode
+            ? 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'n\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.85\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\'/%3E%3C/svg%3E")'
+            : 'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%271.5%27 height=%271.5%27 viewBox=%270 0 1.5 1.5%27><circle cx=%270.75%27 cy=%270.75%27 r=%270.28%27 fill=%27%23ffffff%27 opacity=%270.07%27/></svg>")',
+          backgroundSize: isDarkMode ? '200px 200px' : '1.5px 1.5px',
+          mixBlendMode: isDarkMode ? 'overlay' : 'normal',
+        }}
+      />
       <div className="mx-auto h-full w-full max-w-[1280px] overflow-y-auto px-10 pt-[86px] pb-10 no-scrollbar">
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
           <motion.div {...fadeUp} className="flex items-start justify-between">
             <div>
               <div className="text-4xl font-black tracking-tight bg-gradient-to-r from-[#55B2F9] via-[#1E4F9E] to-[#55B2F9] bg-clip-text text-transparent">
                 FrameConverter
               </div>
-              <div className="mt-1 text-sm text-white/50">
+              <div className="mt-1 text-sm text-white/15">
                 Convert image sequences to animated WebP, APNG, or GIF
               </div>
             </div>
-
+            <button
+              type="button"
+              onClick={() => setIsDarkMode((prev) => !prev)}
+              className={`relative h-12 w-[88px] rounded-full border p-1 transition-all ${
+                isDarkMode
+                  ? 'border-white/10 bg-[#151515] shadow-[0_8px_18px_rgba(0,0,0,0.35)_inset]'
+                  : 'border-black/10 bg-[#f3f4f6] shadow-[0_8px_18px_rgba(0,0,0,0.08)_inset]'
+              }`}
+              aria-label="Toggle theme"
+            >
+              <div
+                className={`absolute top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+                  isDarkMode
+                    ? 'left-1 bg-[#2a2a2a] shadow-[0_6px_14px_rgba(0,0,0,0.45)]'
+                    : 'left-[44px] bg-[#e5e7eb] shadow-[0_6px_14px_rgba(0,0,0,0.15)]'
+                }`}
+              >
+                {isDarkMode ? <Moon className="h-4 w-4 text-white/80" /> : <Sun className="h-4 w-4 text-black/70" />}
+              </div>
+              <div className="flex h-full items-center justify-between px-3 text-xs font-medium">
+                <Moon
+                  className={`h-4 w-4 transition-opacity ${
+                    isDarkMode ? 'text-white/15 opacity-0' : 'text-black/40 opacity-100'
+                  }`}
+                />
+                <Sun
+                  className={`h-4 w-4 transition-opacity ${
+                    isDarkMode ? 'text-white/25 opacity-100' : 'text-black/30 opacity-0'
+                  }`}
+                />
+              </div>
+            </button>
           </motion.div>
 
-          <motion.div {...fadeUp} className="mt-5 grid w-full grid-cols-1 items-stretch gap-6 lg:grid-cols-2">
+          <motion.div {...fadeUp} className="mt-5 grid w-full grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
             <Card className="h-full flex flex-col bg-white/[0.03]">
               <CardHeader className="pb-12">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Paths
                 </CardTitle>
-                <CardDescription>Select input files/folder and output directory</CardDescription>
               </CardHeader>
               <CardContent className="flex-1 space-y-5">
                 <div className="space-y-2">
@@ -382,7 +436,7 @@ export default function App() {
                     </div>
                   </div>
                   {(isPickingInput || isPickingInputFolder || isPickingOutputDir) && (
-                    <div className="text-xs text-white/50">
+                    <div className="text-xs text-white/15">
                       Dialog seems stuck?{' '}
                       <button
                         type="button"
@@ -394,10 +448,10 @@ export default function App() {
                     </div>
                   )}
                   {scanResult && (
-                    <div className="text-xs text-white/45">
+                    <div className="text-xs text-white/12">
                       Found: <span style={{ color: highlightColor }} className="font-semibold">{scanResult.total}</span> files
                       {scanResult.baseSize && (
-                        <span className="ml-2 text-white/35">
+                        <span className="ml-2 text-white/10">
                           ({scanResult.baseSize[0]}×{scanResult.baseSize[1]})
                         </span>
                       )}
@@ -436,7 +490,6 @@ export default function App() {
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Settings
                 </CardTitle>
-                <CardDescription>Configure animation parameters</CardDescription>
               </CardHeader>
               <CardContent className="flex-1 space-y-5">
                 <div className="space-y-2">
@@ -449,7 +502,7 @@ export default function App() {
                     }}
                     placeholder="30"
                   />
-                  <div className="text-xs text-white/45">Default: 30 fps</div>
+                  <div className={`text-xs ${isDarkMode ? 'text-white/10' : 'text-black/50'}`}>Default: 30 fps</div>
                 </div>
 
                 <div className="space-y-2">
@@ -462,7 +515,7 @@ export default function App() {
                     }}
                     placeholder="0"
                   />
-                  <div className="text-xs text-white/45">0 = infinite loop</div>
+                  <div className={`text-xs ${isDarkMode ? 'text-white/10' : 'text-black/50'}`}>0 = infinite loop</div>
                 </div>
 
                 <div className="space-y-2">
@@ -507,7 +560,7 @@ export default function App() {
                         }}
                         placeholder="80"
                       />
-                      <div className="text-xs text-white/45">Higher = better quality, larger file</div>
+                      <div className="text-xs text-white/12">Higher = better quality, larger file</div>
                     </div>
                   )}
                 </div>
@@ -523,7 +576,7 @@ export default function App() {
                   {isConverting ? 'Converting...' : 'Convert'}
                 </button>
               ) : (
-                <Button className="h-16 w-full text-lg font-semibold bg-white/10 text-white/45 hover:bg-white/10" disabled>
+                <Button className="h-16 w-full text-lg font-semibold bg-white/10 text-white/12 hover:bg-white/10" disabled>
                   <Play className="h-5 w-5" />
                   Convert
                 </Button>
@@ -538,7 +591,7 @@ export default function App() {
                     {isPaused && <Pause className="h-4 w-4 text-yellow-500" />}
                     <span className="font-semibold">
                       {isPaused ? 'Paused' : (progress ? progress.phase : 'Starting conversion...')}
-                      {progress?.format && <span className="ml-2 text-white/45">({progress.format})</span>}
+                      {progress?.format && <span className="ml-2 text-white/12">({progress.format})</span>}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -564,7 +617,7 @@ export default function App() {
                         style={{ width: `${Math.min(progress.percent || 0, 100)}%` }}
                       />
                     </div>
-                    <div className="text-xs text-white/45 text-right">
+                    <div className="text-xs text-white/12 text-right">
                       <span className="text-white/80 font-medium">{Math.round(progress.percent || 0)}%</span>
                       {progress.total > 0 && <span className="ml-2">({progress.current} / {progress.total})</span>}
                     </div>
@@ -588,10 +641,10 @@ export default function App() {
                         <XCircle className="h-4 w-4 text-red-500" />
                       )}
                       <span className="font-semibold">{result.format.toUpperCase()}</span>
-                      <span className="text-white/60 truncate">{result.path}</span>
+                      <span className="text-white/20 truncate">{result.path}</span>
                     </div>
                     {result.success && result.originalSize && (
-                      <div className="text-xs text-white/45">
+                      <div className="text-xs text-white/12">
                         {result.compressedSize ? (
                           <>
                             {((result.compressedSize / result.originalSize) * 100).toFixed(1)}% of original
