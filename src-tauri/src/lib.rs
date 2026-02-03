@@ -9,7 +9,7 @@ pub fn run() {
         .setup(|app| {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::<f64> {
-                    width: 1240.0,
+                    width: 1000.0,
                     height: 830.0,
                 }));
                 let _ = win.set_resizable(false);

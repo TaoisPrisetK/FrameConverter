@@ -64,7 +64,9 @@ export default function App() {
   const [loopCount, setLoopCount] = useState<string>('0')
   const [formats, setFormats] = useState<string[]>(['apng'])
   const [useLocalCompression, setUseLocalCompression] = useState<boolean>(false)
-  const [compressionQuality, setCompressionQuality] = useState<string>('80')
+  const [compressionQuality, setCompressionQuality] = useState<string>('0')
+  const [isEditingCompression, setIsEditingCompression] = useState(false)
+  const [tempCompressionValue, setTempCompressionValue] = useState<string>('0')
 
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [isConverting, setIsConverting] = useState(false)
@@ -322,7 +324,6 @@ export default function App() {
     return () => el.removeEventListener('mousedown', onMouseDown)
   }, [])
 
-
   const toggleFormat = (format: string) => {
     setFormats((prev) =>
       prev.includes(format) ? prev.filter((f) => f !== format) : [...prev, format]
@@ -340,6 +341,7 @@ export default function App() {
     initial: { opacity: 1, y: 0 },
     animate: { opacity: 1, y: 0, transition: { duration: 0.9, ease: EASE_OUT } },
   }
+
 
   return (
     <div
@@ -480,7 +482,7 @@ export default function App() {
           }}
         />
       )}
-      <div className="relative z-10 mx-auto h-full w-full max-w-[1280px] overflow-y-auto px-10 pt-[72px] pb-5 no-scrollbar">
+      <div className="relative z-10 mx-auto h-full w-full max-w-[1000px] overflow-y-auto px-[44px] pt-[72px] pb-5 no-scrollbar">
         <div className="flex min-h-full flex-col gap-5">
           <motion.div {...fadeUp} className="flex items-start justify-between">
             <div>
@@ -525,15 +527,19 @@ export default function App() {
             </button>
           </motion.div>
 
-          <motion.div {...fadeUpOpaque} className="mt-5 grid w-full flex-1 min-h-0 grid-cols-1 items-stretch gap-5 lg:grid-cols-[1fr_1fr]">
-            <Card className="h-full flex flex-col" logId="paths-card">
-              <CardHeader className="pb-12">
+          <motion.div
+            {...fadeUpOpaque}
+            className="mt-5 grid w-full flex-1 min-h-0 grid-cols-1 items-start gap-5 md:grid-cols-[1.3fr_0.7fr]"
+          >
+            <Card className="flex flex-col" logId="paths-card">
+              <CardHeader className="pb-[6px]">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Paths
                 </CardTitle>
+                <div className={`mt-12 h-px ${isDarkMode ? 'bg-white/[0.03]' : 'bg-black/[0.03]'}`} style={{ marginTop: '20px' }} />
               </CardHeader>
-              <CardContent className="flex-1 space-y-5">
+              <CardContent className="flex-1 space-y-7">
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">Input</div>
                   <div className="flex items-center gap-3">
@@ -606,16 +612,17 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="h-full flex flex-col" logId="settings-card">
-              <CardHeader className="pb-12">
+            <Card className="flex flex-col" logId="settings-card">
+              <CardHeader className="pb-[6px]">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Settings
                 </CardTitle>
+                <div className={`mt-12 h-px ${isDarkMode ? 'bg-white/[0.03]' : 'bg-black/[0.03]'}`} style={{ marginTop: '20px' }} />
               </CardHeader>
-              <CardContent className="flex-1 space-y-5">
+              <CardContent className="flex-1 space-y-7">
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold">Frame Rate (fps)</div>
+                  <div className="text-sm font-semibold">Frame Rate</div>
                   <Input
                     value={fps}
                     onChange={(e) => {
@@ -624,11 +631,13 @@ export default function App() {
                     }}
                     placeholder="30"
                   />
-                  <div className="text-xs muted-copy">Default: 30 fps</div>
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold">Loop Count</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">Loop Count</div>
+                    <div className="text-xs font-normal muted-copy">0 = Infinite Loop</div>
+                  </div>
                   <Input
                     value={loopCount}
                     onChange={(e) => {
@@ -637,12 +646,11 @@ export default function App() {
                     }}
                     placeholder="0"
                   />
-                  <div className="text-xs muted-copy">0 = infinite loop</div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3.5">
                   <div className="text-sm font-semibold">Output Formats</div>
-                  <div className="flex flex-wrap gap-4">
+                  <div className="flex gap-6">
                     {['apng', 'webp', 'gif'].map((format) => (
                       <div key={format} className="flex items-center space-x-2">
                         <Checkbox
@@ -650,7 +658,7 @@ export default function App() {
                           checked={formats.includes(format)}
                           onCheckedChange={() => toggleFormat(format)}
                         />
-                        <Label htmlFor={format} className="text-sm font-normal cursor-pointer">
+                        <Label htmlFor={format} className="cursor-pointer">
                           {format.toUpperCase()}
                         </Label>
                       </div>
@@ -658,39 +666,79 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold">Compression</div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="local-compression"
-                      checked={useLocalCompression}
-                      onCheckedChange={(checked) => setUseLocalCompression(checked === true)}
-                    />
-                    <Label htmlFor="local-compression" className="text-sm font-normal cursor-pointer">
-                      Use Local Compression
-                    </Label>
+                <div className="space-y-2" style={{ marginTop: '42px' }}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">Compression</div>
+                    <div className="text-xs font-normal muted-copy">Higher = Better Quality</div>
                   </div>
-                  {useLocalCompression && (
-                    <div className="space-y-2">
-                      <div className="text-sm font-semibold">Compression Quality (1-100)</div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={compressionQuality || '0'}
+                      onChange={(e) => {
+                        const num = Number(e.target.value)
+                        setCompressionQuality(num.toString())
+                      }}
+                      className="flex-1 h-2 bg-black/25 rounded-lg appearance-none cursor-pointer accent-[#55B2F9]"
+                      style={{
+                        background: `linear-gradient(to right, #55B2F9 0%, #55B2F9 ${(Number(compressionQuality || 0) / 100) * 100}%, rgba(0,0,0,0.25) ${(Number(compressionQuality || 0) / 100) * 100}%, rgba(0,0,0,0.25) 100%)`
+                      }}
+                    />
+                    {isEditingCompression ? (
                       <Input
-                        value={compressionQuality}
+                        value={tempCompressionValue}
                         onChange={(e) => {
                           const v = e.target.value.replace(/[^0-9]/g, '')
-                          const num = Number(v)
-                          if (num >= 1 && num <= 100) setCompressionQuality(v)
+                          if (v === '' || (Number(v) >= 0 && Number(v) <= 100)) {
+                            setTempCompressionValue(v)
+                          }
                         }}
-                        placeholder="80"
+                        onBlur={() => {
+                          const num = Number(tempCompressionValue)
+                          if (num >= 0 && num <= 100) {
+                            setCompressionQuality(num === 0 ? '0' : num.toString())
+                          } else {
+                            setTempCompressionValue(compressionQuality)
+                          }
+                          setIsEditingCompression(false)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const num = Number(tempCompressionValue)
+                            if (num >= 0 && num <= 100) {
+                              setCompressionQuality(num === 0 ? '0' : num.toString())
+                            } else {
+                              setTempCompressionValue(compressionQuality)
+                            }
+                            setIsEditingCompression(false)
+                          } else if (e.key === 'Escape') {
+                            setTempCompressionValue(compressionQuality)
+                            setIsEditingCompression(false)
+                          }
+                        }}
+                        className="w-12 h-8 text-sm text-right px-2"
+                        autoFocus
                       />
-                      <div className="text-xs text-white/12">Higher = better quality, larger file</div>
-                    </div>
-                  )}
+                    ) : (
+                      <div
+                        className="text-sm font-medium w-12 h-8 flex items-center justify-end cursor-text select-none"
+                        onClick={() => {
+                          setTempCompressionValue(compressionQuality)
+                          setIsEditingCompression(true)
+                        }}
+                      >
+                        {compressionQuality === '0' ? 'Off' : compressionQuality}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
           </motion.div>
 
-          <motion.div {...fadeUpOpaque} className="mt-0 mb-8 w-full space-y-2" style={{ isolation: 'isolate' }}>
+          <motion.div {...fadeUpOpaque} className="mb-8 w-full space-y-2" style={{ isolation: 'isolate', marginTop: '-30px' }}>
             <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
               {canConvert ? (
                 <button
