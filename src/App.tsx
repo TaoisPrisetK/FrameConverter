@@ -336,36 +336,158 @@ export default function App() {
     initial: { opacity: 0, y: 36 },
     animate: { opacity: 1, y: 0, transition: { duration: 0.9, ease: EASE_OUT } },
   }
+  const fadeUpOpaque = {
+    initial: { opacity: 1, y: 0 },
+    animate: { opacity: 1, y: 0, transition: { duration: 0.9, ease: EASE_OUT } },
+  }
 
   return (
     <div
       ref={containerRef}
       className={`relative h-full w-full ${isDarkMode ? 'text-white' : 'text-black'} theme-${isDarkMode ? 'dark' : 'light'}`}
       style={{
-        background: isDarkMode ? 'none' : '#ffffff',
+        background: isDarkMode ? '#000000' : '#ffffff',
       }}
       data-theme={isDarkMode ? 'dark' : 'light'}
     >
-      <div
-        ref={overlayRef}
-        className="pointer-events-none absolute inset-0"
-        style={{
-          opacity: isDarkMode ? 0.15 : 0.18,
-          backgroundImage: isDarkMode
-            ? 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'n\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.85\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\'/%3E%3C/svg%3E")'
-            : 'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%271.5%27 height=%271.5%27 viewBox=%270 0 1.5 1.5%27><circle cx=%270.75%27 cy=%270.75%27 r=%270.28%27 fill=%27%23ffffff%27 opacity=%270.07%27/></svg>")',
-          backgroundSize: isDarkMode ? '200px 200px' : '1.5px 1.5px',
-          mixBlendMode: isDarkMode ? 'overlay' : 'normal',
-        }}
-      />
-      <div className="mx-auto h-full w-full max-w-[1280px] overflow-y-auto px-10 pt-[86px] pb-10 no-scrollbar">
-        <div className="flex flex-col gap-4">
+      {/* Background patterns */}
+      {isDarkMode ? (
+        <>
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background:
+                'radial-gradient(900px circle at 20% 15%, rgba(255,255,255,0.12) 0%, transparent 55%), radial-gradient(1100px circle at 85% 85%, rgba(255,255,255,0.1) 0%, transparent 60%)',
+            }}
+          />
+          {/* Block grid with varying opacity */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              backgroundImage: `
+                linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)
+              `,
+              backgroundSize: '120px 120px',
+            }}
+          />
+          {/* Checker pattern for varying block opacity */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              backgroundImage: `
+                linear-gradient(45deg, rgba(255,255,255,0.023) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(255,255,255,0.023) 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.023) 75%),
+                linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.023) 75%)
+              `,
+              backgroundSize: '240px 240px',
+              backgroundPosition: '0 0, 0 120px, 120px -120px, -120px 0px',
+            }}
+          />
+          {/* Corner fade - hide grid in top-left and bottom-right */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: `
+                radial-gradient(ellipse 80% 70% at 0% 0%, rgba(0,0,0,1) 0%, transparent 60%),
+                radial-gradient(ellipse 80% 70% at 100% 100%, rgba(0,0,0,1) 0%, transparent 60%)
+              `,
+            }}
+          />
+          {/* Bottom fade - hide grid near bottom */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: 'radial-gradient(ellipse 90% 60% at 50% 100%, rgba(0,0,0,1) 0%, transparent 60%)',
+            }}
+          />
+          {/* Subtle warm glow top-left */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: 'radial-gradient(600px ellipse at 15% 10%, rgba(180,140,80,0.06) 0%, transparent 50%)',
+            }}
+          />
+        </>
+      ) : (
+        <>
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background:
+                'radial-gradient(900px circle at 20% 15%, rgba(0,0,0,0.12) 0%, transparent 55%), radial-gradient(1100px circle at 85% 85%, rgba(0,0,0,0.1) 0%, transparent 60%)',
+            }}
+          />
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              backgroundImage: `
+                linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)
+              `,
+              backgroundSize: '120px 120px',
+            }}
+          />
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              backgroundImage: `
+                linear-gradient(45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, rgba(0,0,0,0.015) 75%),
+                linear-gradient(-45deg, transparent 75%, rgba(0,0,0,0.015) 75%)
+              `,
+              backgroundSize: '240px 240px',
+              backgroundPosition: '0 0, 0 120px, 120px -120px, -120px 0px',
+            }}
+          />
+          {/* Corner fade - hide grid in top-left and bottom-right (light) */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: `
+                radial-gradient(ellipse 80% 70% at 0% 0%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%),
+                radial-gradient(ellipse 80% 70% at 100% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)
+              `,
+            }}
+          />
+          {/* Bottom fade - hide grid near bottom (light) */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: 'radial-gradient(ellipse 90% 60% at 50% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)',
+            }}
+          />
+          {/* Subtle warm glow top-left (light) */}
+          <div
+            className="pointer-events-none absolute inset-0 z-0"
+            style={{
+              background: 'radial-gradient(600px ellipse at 15% 10%, rgba(240,200,140,0.12) 0%, transparent 50%)',
+            }}
+          />
+        </>
+      )}
+      {/* Light mode noise overlay */}
+      {!isDarkMode && (
+        <div
+          ref={overlayRef}
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: 0.18,
+            backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%271.5%27 height=%271.5%27 viewBox=%270 0 1.5 1.5%27><circle cx=%270.75%27 cy=%270.75%27 r=%270.28%27 fill=%27%23ffffff%27 opacity=%270.07%27/></svg>")',
+            backgroundSize: '1.5px 1.5px',
+          }}
+        />
+      )}
+      <div className="relative z-10 mx-auto h-full w-full max-w-[1280px] overflow-y-auto px-10 pt-[72px] pb-5 no-scrollbar">
+        <div className="flex min-h-full flex-col gap-5">
           <motion.div {...fadeUp} className="flex items-start justify-between">
             <div>
-              <div className="text-4xl font-black tracking-tight bg-gradient-to-r from-[#55B2F9] via-[#1E4F9E] to-[#55B2F9] bg-clip-text text-transparent">
+              <div className="text-5xl font-black tracking-tight bg-gradient-to-r from-[#55B2F9] via-[#1E4F9E] to-[#55B2F9] bg-clip-text text-transparent">
                 FrameConverter
               </div>
-              <div className="mt-1 text-sm text-white/15">
+              <div className="mt-1 text-sm muted-copy">
                 Convert image sequences to animated WebP, APNG, or GIF
               </div>
             </div>
@@ -403,8 +525,8 @@ export default function App() {
             </button>
           </motion.div>
 
-          <motion.div {...fadeUp} className="mt-5 grid w-full grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
-            <Card className="h-full flex flex-col bg-white/[0.03]">
+          <motion.div {...fadeUpOpaque} className="mt-5 grid w-full flex-1 min-h-0 grid-cols-1 items-stretch gap-5 lg:grid-cols-[1fr_1fr]">
+            <Card className="h-full flex flex-col" logId="paths-card">
               <CardHeader className="pb-12">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
@@ -436,7 +558,7 @@ export default function App() {
                     </div>
                   </div>
                   {(isPickingInput || isPickingInputFolder || isPickingOutputDir) && (
-                    <div className="text-xs text-white/15">
+                  <div className="text-xs muted-copy">
                       Dialog seems stuck?{' '}
                       <button
                         type="button"
@@ -448,10 +570,10 @@ export default function App() {
                     </div>
                   )}
                   {scanResult && (
-                    <div className="text-xs text-white/12">
+                    <div className="text-xs muted-copy">
                       Found: <span style={{ color: highlightColor }} className="font-semibold">{scanResult.total}</span> files
                       {scanResult.baseSize && (
-                        <span className="ml-2 text-white/10">
+                        <span className="ml-2 muted-copy">
                           ({scanResult.baseSize[0]}×{scanResult.baseSize[1]})
                         </span>
                       )}
@@ -484,7 +606,7 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="h-full flex flex-col bg-white/[0.03]">
+            <Card className="h-full flex flex-col" logId="settings-card">
               <CardHeader className="pb-12">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
@@ -502,7 +624,7 @@ export default function App() {
                     }}
                     placeholder="30"
                   />
-                  <div className={`text-xs ${isDarkMode ? 'text-white/10' : 'text-black/50'}`}>Default: 30 fps</div>
+                  <div className="text-xs muted-copy">Default: 30 fps</div>
                 </div>
 
                 <div className="space-y-2">
@@ -515,12 +637,12 @@ export default function App() {
                     }}
                     placeholder="0"
                   />
-                  <div className={`text-xs ${isDarkMode ? 'text-white/10' : 'text-black/50'}`}>0 = infinite loop</div>
+                  <div className="text-xs muted-copy">0 = infinite loop</div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">Output Formats</div>
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap gap-4">
                     {['apng', 'webp', 'gif'].map((format) => (
                       <div key={format} className="flex items-center space-x-2">
                         <Checkbox
@@ -568,15 +690,27 @@ export default function App() {
             </Card>
           </motion.div>
 
-          <motion.div {...fadeUp} className="w-full space-y-4">
+          <motion.div {...fadeUpOpaque} className="mt-0 mb-8 w-full space-y-2" style={{ isolation: 'isolate' }}>
             <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
               {canConvert ? (
-                <button className="cta-plain cta-pill transition-opacity" disabled={!canConvert} onClick={startConvert} type="button">
+                <button
+                  className="cta-plain cta-pill transition-opacity"
+                  disabled={!canConvert}
+                  onClick={startConvert}
+                  type="button"
+                >
                   <Play className="h-5 w-5" />
                   {isConverting ? 'Converting...' : 'Convert'}
                 </button>
               ) : (
-                <Button className="h-16 w-full text-lg font-semibold bg-white/10 text-white/12 hover:bg-white/10" disabled>
+                <Button
+                  className={`h-16 w-full text-lg font-semibold border-0 !opacity-100 rounded-[10px] ${
+                    isDarkMode
+                      ? '!bg-[#1a1a1a] text-white/25 hover:!bg-[#1a1a1a]'
+                      : '!bg-[#e5e7eb] text-black/40 hover:!bg-[#e5e7eb]'
+                  }`}
+                  disabled
+                >
                   <Play className="h-5 w-5" />
                   Convert
                 </Button>
@@ -584,7 +718,7 @@ export default function App() {
             </div>
 
             {isConverting && (
-              <div className="rounded-md bg-white/5 p-4 text-sm space-y-3">
+              <div className="p-2 text-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {!isPaused && <div className="h-4 w-4 border-2 border-white/30 border-t-[#55B2F9] rounded-full animate-spin" />}
@@ -632,7 +766,9 @@ export default function App() {
                 {results.map((result, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between rounded-md bg-white/5 p-3 text-sm"
+                    className={`flex items-center justify-between rounded-md p-3 text-sm ${
+                      isDarkMode ? 'bg-[#141414]/90' : 'bg-white/90'
+                    }`}
                   >
                     <div className="flex items-center gap-2">
                       {result.success ? (

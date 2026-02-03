@@ -6,7 +6,11 @@ export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDi
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('rounded-lg bg-white/5 text-card-foreground shadow-none', className)}
+      className={cn(
+        'app-card rounded-xl bg-[rgba(16,16,16,0.9)] text-card-foreground shadow-none backdrop-blur-[16px] border border-white/12 shadow-[0_24px_70px_rgba(0,0,0,0.3)]',
+        className
+      )}
+      style={{ WebkitBackdropFilter: 'blur(16px)', backdropFilter: 'blur(16px)' }}
       {...props}
     />
   )
