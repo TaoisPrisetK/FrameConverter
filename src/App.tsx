@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Play, Settings2, XCircle, CheckCircle2, Folder, Pause, Square, Sun, Moon } from 'lucide-react'
+import { Play, Settings2, XCircle, CheckCircle2, Folder, Pause, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 import { Button } from '@/components/ui/button'
@@ -54,7 +54,6 @@ function getBaseName(path: string): string {
 }
 
 export default function App() {
-  const [isDarkMode, setIsDarkMode] = useState(true)
   const [inputPath, setInputPath] = useState<string>('')
   const [inputPaths, setInputPaths] = useState<string[]>([])
   const [isFolder, setIsFolder] = useState<boolean>(false)
@@ -324,6 +323,8 @@ export default function App() {
     return () => el.removeEventListener('mousedown', onMouseDown)
   }, [])
 
+  // debug instrumentation removed
+
   const toggleFormat = (format: string) => {
     setFormats((prev) =>
       prev.includes(format) ? prev.filter((f) => f !== format) : [...prev, format]
@@ -346,142 +347,79 @@ export default function App() {
   return (
     <div
       ref={containerRef}
-      className={`relative h-full w-full ${isDarkMode ? 'text-white' : 'text-black'} theme-${isDarkMode ? 'dark' : 'light'}`}
+      className="relative h-full w-full text-black theme-light"
       style={{
-        background: isDarkMode ? '#000000' : '#ffffff',
+        background: '#ffffff',
       }}
-      data-theme={isDarkMode ? 'dark' : 'light'}
+      data-theme="light"
     >
       {/* Background patterns */}
-      {isDarkMode ? (
-        <>
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background:
-                'radial-gradient(900px circle at 20% 15%, rgba(255,255,255,0.12) 0%, transparent 55%), radial-gradient(1100px circle at 85% 85%, rgba(255,255,255,0.1) 0%, transparent 60%)',
-            }}
-          />
-          {/* Block grid with varying opacity */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)
-              `,
-              backgroundSize: '120px 120px',
-            }}
-          />
-          {/* Checker pattern for varying block opacity */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              backgroundImage: `
-                linear-gradient(45deg, rgba(255,255,255,0.023) 25%, transparent 25%),
-                linear-gradient(-45deg, rgba(255,255,255,0.023) 25%, transparent 25%),
-                linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.023) 75%),
-                linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.023) 75%)
-              `,
-              backgroundSize: '240px 240px',
-              backgroundPosition: '0 0, 0 120px, 120px -120px, -120px 0px',
-            }}
-          />
-          {/* Corner fade - hide grid in top-left and bottom-right */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: `
-                radial-gradient(ellipse 80% 70% at 0% 0%, rgba(0,0,0,1) 0%, transparent 60%),
-                radial-gradient(ellipse 80% 70% at 100% 100%, rgba(0,0,0,1) 0%, transparent 60%)
-              `,
-            }}
-          />
-          {/* Bottom fade - hide grid near bottom */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: 'radial-gradient(ellipse 90% 60% at 50% 100%, rgba(0,0,0,1) 0%, transparent 60%)',
-            }}
-          />
-          {/* Subtle warm glow top-left */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: 'radial-gradient(600px ellipse at 15% 10%, rgba(180,140,80,0.06) 0%, transparent 50%)',
-            }}
-          />
-        </>
-      ) : (
-        <>
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background:
-                'radial-gradient(900px circle at 20% 15%, rgba(0,0,0,0.12) 0%, transparent 55%), radial-gradient(1100px circle at 85% 85%, rgba(0,0,0,0.1) 0%, transparent 60%)',
-            }}
-          />
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)
-              `,
-              backgroundSize: '120px 120px',
-            }}
-          />
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              backgroundImage: `
-                linear-gradient(45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
-                linear-gradient(-45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
-                linear-gradient(45deg, transparent 75%, rgba(0,0,0,0.015) 75%),
-                linear-gradient(-45deg, transparent 75%, rgba(0,0,0,0.015) 75%)
-              `,
-              backgroundSize: '240px 240px',
-              backgroundPosition: '0 0, 0 120px, 120px -120px, -120px 0px',
-            }}
-          />
-          {/* Corner fade - hide grid in top-left and bottom-right (light) */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: `
-                radial-gradient(ellipse 80% 70% at 0% 0%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%),
-                radial-gradient(ellipse 80% 70% at 100% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)
-              `,
-            }}
-          />
-          {/* Bottom fade - hide grid near bottom (light) */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: 'radial-gradient(ellipse 90% 60% at 50% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)',
-            }}
-          />
-          {/* Subtle warm glow top-left (light) */}
-          <div
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              background: 'radial-gradient(600px ellipse at 15% 10%, rgba(240,200,140,0.12) 0%, transparent 50%)',
-            }}
-          />
-        </>
-      )}
-      {/* Light mode noise overlay */}
-      {!isDarkMode && (
+      <>
         <div
-          ref={overlayRef}
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-0"
           style={{
-            opacity: 0.18,
-            backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%271.5%27 height=%271.5%27 viewBox=%270 0 1.5 1.5%27><circle cx=%270.75%27 cy=%270.75%27 r=%270.28%27 fill=%27%23ffffff%27 opacity=%270.07%27/></svg>")',
-            backgroundSize: '1.5px 1.5px',
+            background:
+              'radial-gradient(900px circle at 20% 15%, rgba(0,0,0,0.12) 0%, transparent 55%), radial-gradient(1100px circle at 85% 85%, rgba(0,0,0,0.1) 0%, transparent 60%)',
           }}
         />
-      )}
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            backgroundImage: `
+              linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)
+            `,
+            backgroundSize: '120px 120px',
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            backgroundImage: `
+              linear-gradient(45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
+              linear-gradient(-45deg, rgba(0,0,0,0.015) 25%, transparent 25%),
+              linear-gradient(45deg, transparent 75%, rgba(0,0,0,0.015) 75%),
+              linear-gradient(-45deg, transparent 75%, rgba(0,0,0,0.015) 75%)
+            `,
+            backgroundSize: '240px 240px',
+            backgroundPosition: '0 0, 0 120px, 120px -120px, -120px 0px',
+          }}
+        />
+        {/* Corner fade - hide grid in top-left and bottom-right (light) */}
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            background: `
+              radial-gradient(ellipse 80% 70% at 0% 0%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%),
+              radial-gradient(ellipse 80% 70% at 100% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)
+            `,
+          }}
+        />
+        {/* Bottom fade - hide grid near bottom (light) */}
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            background: 'radial-gradient(ellipse 90% 60% at 50% 100%, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 60%)',
+          }}
+        />
+        {/* Subtle warm glow top-left (light) */}
+        <div
+          className="pointer-events-none absolute inset-0 z-0"
+          style={{
+            background: 'radial-gradient(600px ellipse at 15% 10%, rgba(240,200,140,0.12) 0%, transparent 50%)',
+          }}
+        />
+      </>
+      {/* Light mode noise overlay */}
+      <div
+        ref={overlayRef}
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: 0.18,
+          backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%271.5%27 height=%271.5%27 viewBox=%270 0 1.5 1.5%27><circle cx=%270.75%27 cy=%270.75%27 r=%270.28%27 fill=%27%23ffffff%27 opacity=%270.07%27/></svg>")',
+          backgroundSize: '1.5px 1.5px',
+        }}
+      />
       <div className="relative z-10 mx-auto h-full w-full max-w-[1000px] overflow-y-auto px-[44px] pt-[72px] pb-5 no-scrollbar">
         <div className="flex min-h-full flex-col gap-5">
           <motion.div {...fadeUp} className="flex items-start justify-between">
@@ -493,53 +431,30 @@ export default function App() {
                 Convert image sequences to animated WebP, APNG, or GIF
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsDarkMode((prev) => !prev)}
-              className={`relative h-12 w-[88px] rounded-full border p-1 transition-all ${
-                isDarkMode
-                  ? 'border-white/10 bg-[#151515] shadow-[0_8px_18px_rgba(0,0,0,0.35)_inset]'
-                  : 'border-black/10 bg-[#f3f4f6] shadow-[0_8px_18px_rgba(0,0,0,0.08)_inset]'
-              }`}
-              aria-label="Toggle theme"
-            >
-              <div
-                className={`absolute top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full transition-all ${
-                  isDarkMode
-                    ? 'left-1 bg-[#2a2a2a] shadow-[0_6px_14px_rgba(0,0,0,0.45)]'
-                    : 'left-[44px] bg-[#e5e7eb] shadow-[0_6px_14px_rgba(0,0,0,0.15)]'
-                }`}
-              >
-                {isDarkMode ? <Moon className="h-4 w-4 text-white/80" /> : <Sun className="h-4 w-4 text-black/70" />}
-              </div>
-              <div className="flex h-full items-center justify-between px-3 text-xs font-medium">
-                <Moon
-                  className={`h-4 w-4 transition-opacity ${
-                    isDarkMode ? 'text-white/15 opacity-0' : 'text-black/40 opacity-100'
-                  }`}
-                />
-                <Sun
-                  className={`h-4 w-4 transition-opacity ${
-                    isDarkMode ? 'text-white/25 opacity-100' : 'text-black/30 opacity-0'
-                  }`}
-                />
-              </div>
-            </button>
+            <div />
           </motion.div>
 
           <motion.div
             {...fadeUpOpaque}
-            className="mt-5 grid w-full flex-1 min-h-0 grid-cols-1 items-start gap-5 md:grid-cols-[1.3fr_0.7fr]"
+            className="mt-5 grid w-full flex-1 min-h-0 grid-cols-1 items-stretch gap-5 md:grid-cols-[1.3fr_0.7fr]"
+            style={{ height: 'calc(100% - 10px)' }}
           >
-            <Card className="flex flex-col" logId="paths-card">
+            <Card
+              className="flex flex-col h-full"
+              style={{ height: '460px' }}
+              logId="paths-card"
+            >
               <CardHeader className="pb-[6px]">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Paths
                 </CardTitle>
-                <div className={`mt-12 h-px ${isDarkMode ? 'bg-white/[0.03]' : 'bg-black/[0.03]'}`} style={{ marginTop: '20px' }} />
+                <div
+                  className="mt-12 h-px bg-black/[0.03]"
+                  style={{ marginTop: '20px' }}
+                />
               </CardHeader>
-              <CardContent className="flex-1 space-y-7">
+              <CardContent className="flex-1 space-y-7 !pb-3 mt-[10px]">
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">Input</div>
                   <div className="flex items-center gap-3">
@@ -612,15 +527,22 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="flex flex-col" logId="settings-card">
+            <Card
+              className="flex flex-col h-full"
+              style={{ height: '460px' }}
+              logId="settings-card"
+            >
               <CardHeader className="pb-[6px]">
                 <CardTitle className="flex items-center gap-2">
                   <Settings2 className="h-5 w-5 opacity-70" />
                   Settings
                 </CardTitle>
-                <div className={`mt-12 h-px ${isDarkMode ? 'bg-white/[0.03]' : 'bg-black/[0.03]'}`} style={{ marginTop: '20px' }} />
+                <div
+                  className="mt-12 h-px bg-black/[0.03]"
+                  style={{ marginTop: '20px' }}
+                />
               </CardHeader>
-              <CardContent className="flex-1 space-y-7">
+              <CardContent className="flex-1 space-y-7 !pb-3 mt-[10px]">
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">Frame Rate</div>
                   <Input
@@ -738,35 +660,32 @@ export default function App() {
             </Card>
           </motion.div>
 
-          <motion.div {...fadeUpOpaque} className="mb-8 w-full space-y-2" style={{ isolation: 'isolate', marginTop: '-30px' }}>
-            <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
-              {canConvert ? (
-                <button
-                  className="cta-plain cta-pill transition-opacity"
-                  disabled={!canConvert}
-                  onClick={startConvert}
-                  type="button"
-                >
-                  <Play className="h-5 w-5" />
-                  {isConverting ? 'Converting...' : 'Convert'}
-                </button>
-              ) : (
-                <Button
-                  className={`h-16 w-full text-lg font-semibold border-0 !opacity-100 rounded-[10px] ${
-                    isDarkMode
-                      ? '!bg-[#1a1a1a] text-white/25 hover:!bg-[#1a1a1a]'
-                      : '!bg-[#e5e7eb] text-black/40 hover:!bg-[#e5e7eb]'
-                  }`}
-                  disabled
-                >
-                  <Play className="h-5 w-5" />
-                  Convert
-                </Button>
-              )}
-            </div>
+          <div style={{ transform: 'translateY(0px)' }}>
+            <motion.div {...fadeUpOpaque} className="mb-8 w-full space-y-2" style={{ isolation: 'isolate' }}>
+              <div className={canConvert ? 'cta-pill-wrap w-full' : 'w-full'}>
+                {canConvert ? (
+                  <button
+                    className="cta-plain cta-pill transition-opacity"
+                    disabled={!canConvert}
+                    onClick={startConvert}
+                    type="button"
+                  >
+                    <Play className="h-5 w-5" />
+                    {isConverting ? 'Converting...' : 'Convert'}
+                  </button>
+                ) : (
+                  <Button
+                    className="h-16 w-full text-lg font-semibold border-0 !opacity-100 rounded-[10px] !bg-[#e5e7eb] text-black/40 hover:!bg-[#e5e7eb]"
+                    disabled
+                  >
+                    <Play className="h-5 w-5" />
+                    Convert
+                  </Button>
+                )}
+              </div>
 
-            {isConverting && (
-              <div className="p-2 text-sm space-y-3">
+              {isConverting && (
+                <div className="p-2 text-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {!isPaused && <div className="h-4 w-4 border-2 border-white/30 border-t-[#55B2F9] rounded-full animate-spin" />}
@@ -814,9 +733,7 @@ export default function App() {
                 {results.map((result, idx) => (
                   <div
                     key={idx}
-                    className={`flex items-center justify-between rounded-md p-3 text-sm ${
-                      isDarkMode ? 'bg-[#141414]/90' : 'bg-white/90'
-                    }`}
+                    className="flex items-center justify-between rounded-md p-3 text-sm bg-white/90"
                   >
                     <div className="flex items-center gap-2">
                       {result.success ? (
@@ -840,9 +757,10 @@ export default function App() {
                     )}
                   </div>
                 ))}
-              </div>
-            )}
-          </motion.div>
+                </div>
+              )}
+            </motion.div>
+          </div>
         </div>
       </div>
     </div>
